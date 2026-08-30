@@ -1,0 +1,43 @@
+name: OpenCode upstream discovery
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.15.0
+      - name: Compare the pinned release with the latest non-prerelease upstream release
+        id: discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/discover-upstream.mjs >> "$GITHUB_OUTPUT"
+      - name: Open or refresh the candidate issue
+        if: steps.discover.outputs.update_available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.discover.outputs.latest_tag }}
+          PINNED_TAG: ${{ steps.discover.outputs.pinned_tag }}
+        shell: bash
+        run: |
+          title="chore: validate OpenCode ${LATEST_TAG} candidate"
+          body=$(printf '%s\n\n%s\n\n%s\n' \
+            "Pinned production candidate: ${PINNED_TAG}" \
+            "Discovered non-prerelease candidate: ${LATEST_TAG}" \
+            "Promotion requires lock regeneration, source and binary digest review, network-exit scan, Windows and Linux tests, isolated database migration, official-App browser E2E, dual-host canary, and private-OPS approval")
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label upstream-candidate
+          fi

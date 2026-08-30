@@ -1,0 +1,40 @@
+{
+  "name": "aialra-opencode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Content-blind dual-host remote access for the official OpenCode application",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.1",
+      "ws": "8.21.3"
+    }
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "build:official-app": "node scripts/build-official-app.mjs",
+    "check": "pnpm format:check && pnpm -r --if-present check && pnpm test",
+    "check:release": "pnpm check && pnpm build && pnpm build:official-app && pnpm scan:network && pnpm verify:upstream",
+    "dev": "pnpm --parallel --filter @aialra-opencode/control-plane --filter @aialra-opencode/agent dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "generate:manifest": "node scripts/generate-route-manifest.mjs",
+    "refresh:upstream": "node scripts/refresh-upstream-lock.mjs",
+    "scan:network": "node scripts/scan-upstream-network.mjs",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "playwright test",
+    "verify:upstream": "node scripts/verify-upstream-lock.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.3.0",
+    "prettier": "3.6.2",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2"
+  }
+}

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  full-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - name: Install pinned Bun
+        run: npm install --global bun@1.3.14
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm build:official-app
+      - run: pnpm scan:network
+      - run: pnpm verify:upstream
+      - name: Download the pinned official OpenCode binary
+        shell: bash
+        run: |
+          mkdir -p .build/opencode-bin
+          url=$(node -p "require('./upstream.lock.json').binaries.linuxX64.url")
+          expected=$(node -p "require('./upstream.lock.json').binaries.linuxX64.sha256")
+          curl --fail --location --retry 3 --output .build/opencode-linux-x64.tar.gz "$url"
+          echo "$expected  .build/opencode-linux-x64.tar.gz" | sha256sum --check --strict
+          tar -xzf .build/opencode-linux-x64.tar.gz -C .build/opencode-bin
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run the official App and encrypted relay E2E
+        env:
+          AIALRA_OPENCODE_E2E_BINARY: ${{ github.workspace }}/.build/opencode-bin/opencode
+        run: pnpm test:e2e
+
+  agent-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @aialra-opencode/protocol check
+      - run: pnpm --filter @aialra-opencode/protocol test
+      - run: pnpm --filter @aialra-opencode/agent check
+      - run: pnpm --filter @aialra-opencode/agent test
+      - run: pnpm --filter @aialra-opencode/agent build

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/aialra-opencode/upstream-lock.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "upstream",
+    "binaries",
+    "protocol",
+    "networkBaseline",
+    "reference"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "version",
+        "tag",
+        "commit",
+        "releaseTargetCommit",
+        "sourceArchiveSha256"
+      ],
+      "properties": {
+        "repository": { "const": "anomalyco/opencode" },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "tag": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "releaseTargetCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceArchiveSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "binaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windowsX64", "linuxX64"],
+      "properties": {
+        "windowsX64": { "$ref": "#/$defs/asset" },
+        "linuxX64": { "$ref": "#/$defs/asset" }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "openapiPath",
+        "sourceOpenapiSha256",
+        "openapiSha256",
+        "manifestPath",
+        "manifestSha256"
+      ],
+      "properties": {
+        "openapiPath": { "const": "packages/sdk/openapi.json" },
+        "sourceOpenapiSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "openapiSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "manifestPath": { "const": "generated/route-capabilities.json" },
+        "manifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "networkBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platformFetchReferences",
+        "directWebSockets",
+        "directEventSources",
+        "directWorkers",
+        "globalFetchAllowlist"
+      ],
+      "properties": {
+        "platformFetchReferences": { "type": "integer", "minimum": 1 },
+        "directWebSockets": { "type": "array", "items": { "type": "string" } },
+        "directEventSources": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "directWorkers": { "type": "array", "items": { "type": "string" } },
+        "globalFetchAllowlist": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "commit"],
+      "properties": {
+        "project": { "const": "AIALRA-KIMI" },
+        "commit": { "const": "56b2e18" }
+      }
+    }
+  },
+  "$defs": {
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url", "sha256", "size"],
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

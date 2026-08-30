@@ -1,0 +1,44 @@
+{
+  "$schema": "./schemas/upstream-lock.schema.json",
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "anomalyco/opencode",
+    "version": "1.18.25",
+    "tag": "v1.18.25",
+    "commit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+    "releaseTargetCommit": "733562e92a96255fb123aae92f267e4534a635fb",
+    "sourceArchiveSha256": "8a958c8d72084f74d8c4b99b769267bacc88cd6612ba2bb5fd33018a2e4efb07"
+  },
+  "binaries": {
+    "windowsX64": {
+      "name": "opencode-windows-x64.zip",
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.25/opencode-windows-x64.zip",
+      "sha256": "831e213e5f454d6e8b26f0fb24c7b3d42b40e47d73d154672a9192702eb08416",
+      "size": 60659144
+    },
+    "linuxX64": {
+      "name": "opencode-linux-x64.tar.gz",
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.25/opencode-linux-x64.tar.gz",
+      "sha256": "58a3729a6f3432dd6d2917fcc4a949788891a035818646ad480e12c947f56e78",
+      "size": 60534407
+    }
+  },
+  "protocol": {
+    "openapiPath": "packages/sdk/openapi.json",
+    "sourceOpenapiSha256": "3e151706ee1e720230bf75b3e74ccb73b9a0329aa358ae23966b692631664d8b",
+    "openapiSha256": "dfb7d42a555389f0c662fa2b4a8af1d61633c96710cf54bce3ff2404e2e7d896",
+    "manifestPath": "generated/route-capabilities.json",
+    "manifestSha256": "ec41e4f18fcf9b2f0e85b6ff3a415d5d0d9711886e942353390a0e7b78307303"
+  },
+  "networkBaseline": {
+    "platformFetchReferences": 11,
+    "directWebSockets": ["packages/app/src/components/terminal.tsx"],
+    "directEventSources": [],
+    "directWorkers": [],
+    "globalFetchAllowlist": ["packages/app/src/utils/draft-store.ts"]
+  },
+  "reference": {
+    "project": "AIALRA-KIMI",
+    "commit": "56b2e18"
+  }
+}

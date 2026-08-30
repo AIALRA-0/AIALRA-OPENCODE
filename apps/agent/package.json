@@ -1,0 +1,34 @@
+{
+  "name": "@aialra-opencode/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aialra-opencode-agent": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts run",
+    "e2e:local": "tsx scripts/local-e2e.ts",
+    "start": "node dist/main.js run",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aialra-opencode/protocol": "workspace:*",
+    "@noble/ciphers": "2.0.1",
+    "@noble/curves": "2.0.1",
+    "@noble/hashes": "2.0.1",
+    "ws": "8.21.3",
+    "zod": "4.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "tsdown": "0.22.14",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

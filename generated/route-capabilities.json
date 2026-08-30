@@ -1,0 +1,1584 @@
+{
+  "version": 1,
+  "upstreamVersion": "1.18.25",
+  "upstreamCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+  "sourceOpenapiSha256": "3e151706ee1e720230bf75b3e74ccb73b9a0329aa358ae23966b692631664d8b",
+  "openapiSha256": "dfb7d42a555389f0c662fa2b4a8af1d61633c96710cf54bce3ff2404e2e7d896",
+  "generatedAt": "2026-08-28T05:58:04Z",
+  "routes": [
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/agent",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/agent",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/command",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "PATCH"
+      ],
+      "pathTemplate": "/api/credential/{credentialID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/event",
+      "category": "event",
+      "maxBodyBytes": 0,
+      "stream": "sse"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/fs/find",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/fs/list",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/fs/read/*",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/health",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/integration",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/integration/{integrationID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/integration/{integrationID}/connect/oauth",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/integration/attempt/{attemptID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "pathTemplate": "/api/integration/attempt/{attemptID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/integration/attempt/{attemptID}/complete",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/location",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/model",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/permission/request",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/permission/saved",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "pathTemplate": "/api/permission/saved/{id}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/provider",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/provider/{providerID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/pty",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/pty",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/pty/{ptyID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "PUT"
+      ],
+      "pathTemplate": "/api/pty/{ptyID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/pty/{ptyID}/connect",
+      "category": "pty",
+      "maxBodyBytes": 0,
+      "stream": "websocket"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/pty/{ptyID}/connect-token",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/question/request",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/reference",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/agent",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/compact",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/context",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/event",
+      "category": "event",
+      "maxBodyBytes": 0,
+      "stream": "sse"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/history",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/interrupt",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/message",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/message/{messageID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/model",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/permission",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/permission",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/permission/{requestID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/permission/{requestID}/reply",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/prompt",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/question",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/question/{requestID}/reject",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/question/{requestID}/reply",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/revert/clear",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/revert/commit",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/revert/stage",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/wait",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/active",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/skill",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/command",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/config",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "PATCH"
+      ],
+      "pathTemplate": "/config",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/config/providers",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/event",
+      "category": "event",
+      "maxBodyBytes": 0,
+      "stream": "sse"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/capabilities",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/console",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/console/orgs",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/console/switch",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/control-plane/move-session",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "pathTemplate": "/experimental/project/{projectID}/copy",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/project/{projectID}/copy/generate-name",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/project/{projectID}/copy/refresh",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/resource",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/session",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/session/{sessionID}/background",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/tool",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/tool/ids",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/workspace",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/workspace",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "pathTemplate": "/experimental/workspace/{id}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/workspace/adapter",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/workspace/status",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/workspace/sync-list",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/workspace/warp",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/experimental/worktree",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "pathTemplate": "/experimental/worktree",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/experimental/worktree/reset",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/file",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/file/content",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/file/status",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/find",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/find/file",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/find/symbol",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/formatter",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/global/config",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "PATCH"
+      ],
+      "pathTemplate": "/global/config",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/global/dispose",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/global/event",
+      "category": "event",
+      "maxBodyBytes": 0,
+      "stream": "sse"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/global/health",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/instance/dispose",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/log",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/lsp",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/mcp",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/mcp",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "pathTemplate": "/mcp/{name}/auth",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/mcp/{name}/auth/authenticate",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/mcp/{name}/auth/callback",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/mcp/{name}/connect",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/mcp/{name}/disconnect",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/path",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/permission",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/permission/{requestID}/reply",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/project",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "PATCH"
+      ],
+      "pathTemplate": "/project/{projectID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/project/{projectID}/directories",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/project/current",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/project/git/init",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/provider",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/provider/{providerID}/oauth/authorize",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/provider/{providerID}/oauth/callback",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/provider/auth",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/pty",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/pty",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/pty/{ptyID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "PUT"
+      ],
+      "pathTemplate": "/pty/{ptyID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/pty/{ptyID}/connect",
+      "category": "pty",
+      "maxBodyBytes": 0,
+      "stream": "websocket"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/pty/{ptyID}/connect-token",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/pty/shells",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/question",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/question/{requestID}/reject",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/question/{requestID}/reply",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "PATCH"
+      ],
+      "pathTemplate": "/session/{sessionID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/abort",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}/children",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/command",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}/diff",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/fork",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/init",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}/message",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/message",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}/message/{messageID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "pathTemplate": "/session/{sessionID}/message/{messageID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "DELETE",
+        "PATCH"
+      ],
+      "pathTemplate": "/session/{sessionID}/message/{messageID}/part/{partID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/permissions/{permissionID}",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/prompt_async",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/revert",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/shell",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/summarize",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/{sessionID}/todo",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/session/{sessionID}/unrevert",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/session/status",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/skill",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/sync/history",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/sync/replay",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/sync/start",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/sync/steal",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/append-prompt",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/clear-prompt",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/tui/control/next",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/control/response",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/execute-command",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/open-help",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/open-models",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/open-sessions",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/open-themes",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/publish",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/select-session",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/show-toast",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/tui/submit-prompt",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/vcs",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "pathTemplate": "/vcs/apply",
+      "category": "write",
+      "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/vcs/diff",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/vcs/diff/raw",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/vcs/status",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    "strict": true,
+    "paths": {
+      "@opencode-ai/app": ["./src/opencode-app-shim.d.ts"],
+      "@opencode-ai/app/index.css": ["./src/style-shim.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+}

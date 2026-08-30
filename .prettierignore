@@ -1,0 +1,3 @@
+generated/*.json
+apps/web/dist/
+.build/
