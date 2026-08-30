@@ -2,7 +2,7 @@
   "version": 1,
   "upstreamVersion": "1.18.25",
   "upstreamCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
-  "sourceOpenapiSha256": "3e151706ee1e720230bf75b3e74ccb73b9a0329aa358ae23966b692631664d8b",
+  "sourceOpenapiSha256": "c0af493bae06c8f50ae05474921570eb05f301c92a5f68f6a6365f530b719ad7",
   "openapiSha256": "dfb7d42a555389f0c662fa2b4a8af1d61633c96710cf54bce3ff2404e2e7d896",
   "generatedAt": "2026-08-28T05:58:04Z",
   "routes": [

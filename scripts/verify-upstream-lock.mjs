@@ -7,7 +7,15 @@ const sourceRoot = resolve(
   process.argv[2] ?? process.env.OPENCODE_UPSTREAM_SOURCE ?? ".build/upstream",
 );
 const openapi = await readFile(resolve(sourceRoot, lock.protocol.openapiPath));
-const openapiSha256 = createHash("sha256").update(openapi).digest("hex");
+// Git may materialize text files as CRLF on Windows. Hash the canonical LF
+// representation so the same pinned upstream object verifies on every host.
+const canonicalOpenapi = Buffer.from(
+  openapi.toString("utf8").replace(/\r\n/g, "\n"),
+  "utf8",
+);
+const openapiSha256 = createHash("sha256")
+  .update(canonicalOpenapi)
+  .digest("hex");
 if (openapiSha256 !== lock.protocol.sourceOpenapiSha256)
   throw new Error("source OpenAPI digest differs from the pinned release");
 

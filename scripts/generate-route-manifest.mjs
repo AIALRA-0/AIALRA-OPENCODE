@@ -28,7 +28,10 @@ if (!/^[0-9a-f]{64}$/.test(runtimeOpenapiSha256))
 const source = resolve(sourceArg);
 const output = resolve(outputArg);
 const raw = await readFile(source);
-const openapi = JSON.parse(raw.toString("utf8"));
+// Keep the manifest stable when Git checks out the official JSON with CRLF on
+// Windows and LF on Linux.
+const canonicalSource = raw.toString("utf8").replace(/\r\n/g, "\n");
+const openapi = JSON.parse(canonicalSource);
 const methods = new Set(["get", "post", "put", "patch", "delete", "options"]);
 const excludedPaths = new Set([
   "/api/integration/{integrationID}/connect/key",
@@ -88,7 +91,9 @@ const manifest = {
   version: 1,
   upstreamVersion: version,
   upstreamCommit: commit,
-  sourceOpenapiSha256: createHash("sha256").update(raw).digest("hex"),
+  sourceOpenapiSha256: createHash("sha256")
+    .update(canonicalSource, "utf8")
+    .digest("hex"),
   openapiSha256: runtimeOpenapiSha256,
   generatedAt,
   routes,

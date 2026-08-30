@@ -25,10 +25,10 @@
   },
   "protocol": {
     "openapiPath": "packages/sdk/openapi.json",
-    "sourceOpenapiSha256": "3e151706ee1e720230bf75b3e74ccb73b9a0329aa358ae23966b692631664d8b",
+    "sourceOpenapiSha256": "c0af493bae06c8f50ae05474921570eb05f301c92a5f68f6a6365f530b719ad7",
     "openapiSha256": "dfb7d42a555389f0c662fa2b4a8af1d61633c96710cf54bce3ff2404e2e7d896",
     "manifestPath": "generated/route-capabilities.json",
-    "manifestSha256": "ec41e4f18fcf9b2f0e85b6ff3a415d5d0d9711886e942353390a0e7b78307303"
+    "manifestSha256": "8be6e49fe0f413e3113fcbecbf20219be6ba29c125e61c59b9e26acab3371387"
   },
   "networkBaseline": {
     "platformFetchReferences": 11,
