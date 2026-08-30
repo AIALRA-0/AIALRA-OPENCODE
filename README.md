@@ -145,7 +145,7 @@ Agent 会读回 OpenCode 版本、OpenAPI 摘要和能力清单，任何一项�
 | 网络出口扫描           | 11 个 `Platform.fetch` 引用、1 个已接管 PTY WebSocket | 未发现 EventSource 或 Worker，唯一全局 fetch 在锁定允许列表内      |
 | 加密本地端到端         | HTTP、SSE、PTY、拒绝路由和版本读回全部通过            | 使用真实 OpenCode 1.18.25 进程，不调用模型                         |
 | 官方界面浏览器端到端   | Chromium 通过                                         | 能看到 OpenCode Go，控制平面重启后同页恢复 HTTP 与事件通道         |
-| 生产双主机             | 私有参考部署验收通过                                  | VPS 与 Windows 均读回 OpenCode 1.18.25 和预期模型，地址不公开       |
+| 生产双主机             | 私有参考部署验收通过                                  | VPS 与 Windows 均读回 OpenCode 1.18.25 和预期模型，地址不公开      |
 
 <div align="center">表 7.1 当前验证范围与证据边界</div>
 

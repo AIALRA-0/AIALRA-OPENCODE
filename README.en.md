@@ -141,7 +141,7 @@ The table separates publicly reproducible source checks from private reference-d
 | Network exit scan                  | 11 `Platform.fetch` references and one intercepted PTY WebSocket | No EventSource or Worker, with one lockfile-approved global fetch                                        |
 | Encrypted local E2E                | HTTP, SSE, PTY, route rejection, and version readback pass       | Uses a real OpenCode 1.18.25 process without model calls                                                 |
 | Official UI browser E2E            | Chromium passes                                                  | OpenCode Go is visible and the same page recovers after relay restart                                    |
-| Production dual host               | Private reference deployment accepted                           | Both hosts read back OpenCode 1.18.25 and the intended model; addresses remain private                    |
+| Production dual host               | Private reference deployment accepted                            | Both hosts read back OpenCode 1.18.25 and the intended model; addresses remain private                   |
 
 <div align="center">Table 7.1 Current verification scope and evidence boundary</div>
 
