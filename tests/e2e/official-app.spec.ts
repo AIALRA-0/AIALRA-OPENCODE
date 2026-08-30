@@ -109,6 +109,8 @@ test("runs the zero-patch official App and recovers after a control-plane restar
 }) => {
   const binary = process.env.AIALRA_OPENCODE_E2E_BINARY;
   if (!binary) test.skip(true, "AIALRA_OPENCODE_E2E_BINARY is required");
+  const expectedProvider =
+    process.env.AIALRA_OPENCODE_E2E_PROVIDER ?? "opencode";
 
   let control: ChildProcess | null = null;
   let agent: ChildProcess | null = null;
@@ -154,7 +156,7 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       providerStatus: 200,
     });
     expect(providerReadback.healthContentType).toContain("application/json");
-    expect(providerReadback.connected).toContain("opencode-go");
+    expect(providerReadback.connected).toContain(expectedProvider);
     const configurationReadback = await page.evaluate(async (virtualHost) => {
       const response = await fetch(`https://${virtualHost}/config/providers`);
       const value = (await response.json()) as unknown;
@@ -192,9 +194,16 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       sensitiveFieldFound: false,
     });
     await page.getByRole("tab", { name: /^(提供商|Providers)$/u }).click();
-    await expect(page.getByText("OpenCode Go", { exact: true })).toBeVisible({
-      timeout: 15_000,
+    const providersPanel = page.getByRole("tabpanel", {
+      name: /^(提供商|Providers)$/u,
     });
+    await expect(providersPanel).toBeVisible({ timeout: 15_000 });
+    await expect(
+      providersPanel.getByRole("heading", {
+        name: /^(提供商|Providers)$/u,
+        level: 2,
+      }),
+    ).toBeVisible();
 
     await stop(control);
     control = tsx("apps/control-plane/scripts/e2e-server.ts");

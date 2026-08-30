@@ -41,6 +41,9 @@ jobs:
       - name: Run the official App and encrypted relay E2E
         env:
           AIALRA_OPENCODE_E2E_BINARY: ${{ github.workspace }}/.build/opencode-bin/opencode
+          # The public CI runner has no provider credentials, so it verifies the
+          # built-in provider. Production separately reads back OpenCode Go.
+          AIALRA_OPENCODE_E2E_PROVIDER: opencode
         run: pnpm test:e2e
 
   agent-portability:
