@@ -38,4 +38,14 @@ describe("production identity configuration", () => {
       "loopback",
     );
   });
+
+  it("rejects a production callback on a different origin", () => {
+    expect(() =>
+      loadConfig({
+        ...productionEnv(),
+        OIDC_REDIRECT_URI:
+          "https://opencode-canary.example.invalid/auth/callback",
+      }),
+    ).toThrow("OIDC_REDIRECT_URI must match");
+  });
 });

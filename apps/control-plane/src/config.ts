@@ -138,6 +138,20 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env): AppConfig {
   if (hasPartialOidc) throw new Error("OIDC configuration must be complete");
   if (isProduction && !oidcValues.every(Boolean))
     throw new Error("Production requires OIDC");
+  if (isProduction && oidcValues.every(Boolean)) {
+    const redirectUri = new URL(env.OIDC_REDIRECT_URI!);
+    const publicOrigin = new URL(env.PUBLIC_ORIGIN);
+    if (
+      redirectUri.origin !== publicOrigin.origin ||
+      redirectUri.pathname !== "/auth/callback" ||
+      redirectUri.search ||
+      redirectUri.hash
+    ) {
+      throw new Error(
+        "Production OIDC_REDIRECT_URI must match PUBLIC_ORIGIN/auth/callback",
+      );
+    }
+  }
   return {
     nodeEnv: env.NODE_ENV,
     host: env.HOST,

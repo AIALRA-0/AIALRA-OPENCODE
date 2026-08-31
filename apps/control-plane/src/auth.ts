@@ -19,6 +19,29 @@ interface OidcTransaction {
   returnTo: string;
 }
 
+export function requestOrigin(
+  request: Pick<FastifyRequest, "protocol" | "headers">,
+): string | null {
+  const protocol = request.protocol;
+  const host = request.headers.host;
+  if ((protocol !== "http" && protocol !== "https") || typeof host !== "string")
+    return null;
+  try {
+    const origin = new URL(`${protocol}://${host}`);
+    if (
+      origin.username ||
+      origin.password ||
+      origin.pathname !== "/" ||
+      origin.search ||
+      origin.hash
+    )
+      return null;
+    return origin.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function safeReturnPath(value: string, publicOrigin: URL): string {
   if (
     !value.startsWith("/") ||
@@ -36,6 +59,15 @@ export function safeReturnPath(value: string, publicOrigin: URL): string {
   } catch {
     return "/";
   }
+}
+
+export function canonicalLoginLocation(
+  publicOrigin: URL,
+  returnTo: string,
+): string {
+  const url = new URL("/auth/login", publicOrigin);
+  url.searchParams.set("returnTo", returnTo);
+  return url.href;
 }
 
 export class AuthService {
@@ -114,6 +146,15 @@ export class AuthService {
 
   async registerRoutes(app: FastifyInstance): Promise<void> {
     app.get("/auth/login", async (request, reply) => {
+      const returnTo = this.safeReturnTo(
+        typeof request.query === "object" &&
+          request.query &&
+          "returnTo" in request.query
+          ? String(request.query.returnTo)
+          : "/",
+      );
+      if (!this.isCanonicalRequest(request))
+        return reply.redirect(this.canonicalLoginUrl(returnTo));
       if (this.config.devAuthBypass && this.config.nodeEnv !== "production") {
         return reply.redirect("/");
       }
@@ -122,13 +163,6 @@ export class AuthService {
       const provider = await this.provider();
       const verifier = oidc.randomPKCECodeVerifier();
       const state = oidc.randomState();
-      const returnTo = this.safeReturnTo(
-        typeof request.query === "object" &&
-          request.query &&
-          "returnTo" in request.query
-          ? String(request.query.returnTo)
-          : "/",
-      );
       const transaction = await new EncryptJWT({ state, verifier, returnTo })
         .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
         .setIssuedAt()
@@ -148,11 +182,13 @@ export class AuthService {
     });
 
     app.get("/auth/callback", async (request, reply) => {
+      if (!this.isCanonicalRequest(request))
+        return reply.redirect(this.canonicalLoginUrl("/"));
       if (!this.config.oidc)
         return reply.code(503).send({ error: "oidc_not_configured" });
       const encrypted = request.cookies[OIDC_COOKIE];
       if (!encrypted)
-        return reply.code(400).send({ error: "missing_oidc_transaction" });
+        return reply.code(400).send({ error: "oidc_transaction_expired" });
       let transaction: OidcTransaction;
       try {
         const { payload } = await jwtDecrypt(encrypted, this.config.sessionKey);
@@ -229,6 +265,14 @@ export class AuthService {
 
   private safeReturnTo(value: string): string {
     return safeReturnPath(value, this.config.publicOrigin);
+  }
+
+  private isCanonicalRequest(request: FastifyRequest): boolean {
+    return requestOrigin(request) === this.config.publicOrigin.origin;
+  }
+
+  private canonicalLoginUrl(returnTo: string): string {
+    return canonicalLoginLocation(this.config.publicOrigin, returnTo);
   }
 
   private cookieOptions(maxAge: number) {
