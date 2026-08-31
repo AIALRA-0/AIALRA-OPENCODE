@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
+import { workspaceExternalDirectoryConfig } from "./workspace-boundary.js";
 
 export interface OpenCodeProbe {
   version: string;
@@ -42,6 +43,7 @@ export class OpenCodeServer {
     private readonly executable: string,
     private readonly expectedVersion: string,
     private readonly expectedOpenapiSha256: string,
+    private readonly workspaceRoot: string,
   ) {}
 
   async start(): Promise<OpenCodeProbe> {
@@ -70,7 +72,9 @@ export class OpenCodeServer {
           ...process.env,
           OPENCODE_SERVER_USERNAME: username,
           OPENCODE_SERVER_PASSWORD: password,
+          OPENCODE_CONFIG_CONTENT: workspaceExternalDirectoryConfig(),
         },
+        cwd: this.workspaceRoot,
         stdio: ["ignore", "ignore", "ignore"],
         windowsHide: true,
       },
@@ -126,6 +130,18 @@ export class OpenCodeServer {
     this.child = null;
     this.probe = null;
     if (!child || child.exitCode !== null) return;
+    if (process.platform === "win32" && child.pid) {
+      const killer = spawn(
+        "taskkill",
+        ["/pid", String(child.pid), "/t", "/f"],
+        {
+          stdio: "ignore",
+          windowsHide: true,
+        },
+      );
+      await Promise.race([once(killer, "exit"), delay(5_000)]);
+      return;
+    }
     child.kill("SIGTERM");
     await Promise.race([once(child, "exit"), delay(5_000)]);
     if (child.exitCode === null) child.kill("SIGKILL");

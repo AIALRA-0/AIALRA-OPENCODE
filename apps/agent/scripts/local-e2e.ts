@@ -326,6 +326,10 @@ async function request(
 
 async function main(): Promise<void> {
   const temporary = await mkdtemp(join(tmpdir(), "aialra-opencode-e2e-"));
+  const workspaceRoot = process.env.AIALRA_OPENCODE_E2E_WORKSPACE ?? temporary;
+  const displayName = process.env.AIALRA_OPENCODE_E2E_NAME ?? "Local E2E";
+  const mode =
+    process.env.AIALRA_OPENCODE_E2E_MODE === "vps" ? "vps" : "remote";
   const configPath = join(temporary, "agent.json");
   let agent: ChildProcess | null = null;
   let socket: WebSocket | null = null;
@@ -344,7 +348,7 @@ async function main(): Promise<void> {
         "x-csrf-token": csrf,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ displayName: "Local E2E", mode: "remote" }),
+      body: JSON.stringify({ displayName, mode }),
     });
     if (!pairing.ok)
       throw new Error(`pairing request failed with ${pairing.status}`);
@@ -366,9 +370,9 @@ async function main(): Promise<void> {
           "--pairing-code-file",
           "-",
           "--name",
-          "Local E2E",
+          displayName,
           "--mode",
-          "remote",
+          mode,
           "--opencode",
           executable,
           "--upstream-commit",
@@ -379,6 +383,10 @@ async function main(): Promise<void> {
           lock.protocol.openapiSha256,
           "--manifest",
           join(repo, "generated/route-capabilities.json"),
+          "--workspace-root",
+          workspaceRoot,
+          "--workspace-label",
+          `${displayName} workspace`,
           "--config",
           configPath,
         ],
@@ -418,7 +426,7 @@ async function main(): Promise<void> {
       ).hosts;
       const host = hosts.find(
         (candidate) =>
-          candidate.displayName === "Local E2E" && candidate.state === "online",
+          candidate.displayName === displayName && candidate.state === "online",
       );
       if (host) {
         if (host.opencodeVersion !== lock.upstream.version)
@@ -497,6 +505,17 @@ async function main(): Promise<void> {
     if (denied.status !== null || !denied.error)
       throw new Error("unknown route was not rejected before loopback access");
 
+    const escaped = await request(http, {
+      method: "GET",
+      path: "/path",
+      query: `directory=${encodeURIComponent(join(tmpdir(), `${displayName}-outside-workspace`))}`,
+    });
+    if (
+      escaped.status !== null ||
+      escaped.error !== "workspace_boundary_rejected"
+    )
+      throw new Error("workspace boundary did not reject an escaped directory");
+
     const event = await BrowserChannel.open({
       socket,
       hostId,
@@ -541,7 +560,9 @@ async function main(): Promise<void> {
       body: {},
     });
     if (ptyCreated.status !== 200 || ptyCreated.error)
-      throw new Error("PTY creation failed");
+      throw new Error(
+        `PTY creation failed: status=${ptyCreated.status} error=${ptyCreated.error ?? "none"} body=${ptyCreated.body.toString("utf8").slice(0, 500)}`,
+      );
     const ptyId = String(
       (JSON.parse(ptyCreated.body.toString("utf8")) as { id: string }).id,
     );
@@ -632,7 +653,12 @@ async function main(): Promise<void> {
     const expectedPrefix = join(tmpdir(), "aialra-opencode-e2e-");
     if (!temporary.startsWith(expectedPrefix))
       throw new Error("temporary cleanup target escaped its prefix");
-    await rm(temporary, { recursive: true, force: true });
+    await rm(temporary, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 250,
+    });
   }
 }
 

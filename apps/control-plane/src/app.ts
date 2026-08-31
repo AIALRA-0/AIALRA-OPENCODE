@@ -87,6 +87,8 @@ export async function createApp(config: AppConfig): Promise<AppServices> {
         connectSrc: [
           "'self'",
           config.publicOrigin.origin.replace(/^http/, "ws"),
+          "https://*.opencode.invalid",
+          "wss://*.opencode.invalid",
         ],
         objectSrc: ["'none'"],
         baseUri: ["'none'"],

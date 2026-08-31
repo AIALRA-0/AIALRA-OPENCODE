@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
 const AgentConfigSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   server: z.string().url(),
   hostId: z.string().min(8).max(128),
   displayName: z.string().min(1).max(120),
@@ -16,6 +16,8 @@ const AgentConfigSchema = z.object({
   expectedVersion: z.string().min(1),
   expectedOpenapiSha256: z.string().regex(/^[0-9a-f]{64}$/),
   manifestPath: z.string().min(1),
+  workspaceRoot: z.string().min(1),
+  workspaceLabel: z.string().min(1).max(80),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

@@ -36,12 +36,20 @@ import {
 } from "./response-policy.js";
 import { RoutePolicy } from "./route-policy.js";
 import { grantPublicKey, SecureChannel } from "./secure-channel.js";
+import { WorkspaceBoundary } from "./workspace-boundary.js";
 
 const AGENT_VERSION = "0.1.0";
 const MAX_CONTROL_FRAME_BYTES = 1024 * 1024;
 const MAX_RELAY_CHUNK_BYTES = 512 * 1024;
 const MAX_STALE_PTY_IDS = 256;
-const CAPABILITIES = ["http", "manual-permissions", "pty", "sse"];
+const CAPABILITIES = [
+  "http",
+  "manual-permissions",
+  "multi-project-workspace",
+  "pty",
+  "sse",
+  "workspace-boundary",
+];
 
 interface ChannelRuntime {
   secure: SecureChannel;
@@ -88,6 +96,11 @@ function relayErrorCode(error: unknown, aborted: boolean): string {
   if (message.includes("not present in the pinned capability manifest"))
     return "route_not_allowed";
   if (message.includes("body exceeds")) return "body_limit_exceeded";
+  if (
+    message.includes("workspace boundary") ||
+    message.includes("workspace path")
+  )
+    return "workspace_boundary_rejected";
   if (message.includes("capability grant")) return "capability_denied";
   if (message.includes("secret-bearing configuration"))
     return "configuration_secret_rejected";
@@ -169,6 +182,7 @@ export class AgentRuntime {
   private readonly grantVerificationKey;
   private readonly policy: RoutePolicy;
   private readonly server: OpenCodeServer;
+  private readonly workspace: WorkspaceBoundary;
   private readonly channels = new Map<string, ChannelRuntime>();
   private readonly stalePtys = new Set<string>();
   private probe: OpenCodeProbe | null = null;
@@ -178,14 +192,17 @@ export class AgentRuntime {
   private constructor(
     private readonly config: AgentConfig,
     policy: RoutePolicy,
+    workspace: WorkspaceBoundary,
   ) {
     this.policy = policy;
+    this.workspace = workspace;
     this.identityPrivateKey = createPrivateKey(config.identityPrivateKeyPem);
     this.grantVerificationKey = grantPublicKey(config.grantVerificationKeyPem);
     this.server = new OpenCodeServer(
       config.opencodePath,
       config.expectedVersion,
       config.expectedOpenapiSha256,
+      config.workspaceRoot,
     );
   }
 
@@ -202,7 +219,8 @@ export class AgentRuntime {
         "agent configuration and route manifest do not describe the same release",
       );
     }
-    return new AgentRuntime(config, policy);
+    const workspace = await WorkspaceBoundary.create(config.workspaceRoot);
+    return new AgentRuntime(config, policy, workspace);
   }
 
   async run(): Promise<void> {
@@ -443,6 +461,7 @@ export class AgentRuntime {
     runtime.requests.set(request.requestId, controller);
     try {
       const route = this.policy.authorizeHttp(request);
+      await this.workspace.assertRequest(request);
       const scope =
         route.category === "event"
           ? "event.stream"
@@ -524,6 +543,29 @@ export class AgentRuntime {
             bodyBase64: Buffer.from(chunk).toString("base64url"),
           });
         }
+      } else if (
+        (request.path === "/path" || request.path === "/api/path") &&
+        response.body
+      ) {
+        const raw = new Uint8Array(await response.arrayBuffer());
+        const safe = this.workspace.sanitizePathResponse(request.path, raw);
+        responseHeaders.delete("content-length");
+        for (
+          let offset = 0;
+          offset < safe.byteLength;
+          offset += MAX_RELAY_CHUNK_BYTES
+        ) {
+          const chunk = safe.subarray(
+            offset,
+            Math.min(offset + MAX_RELAY_CHUNK_BYTES, safe.byteLength),
+          );
+          this.sendEncrypted(socket, runtime, {
+            type: "relay.http.chunk",
+            requestId: request.requestId,
+            sequence: sequence++,
+            bodyBase64: Buffer.from(chunk).toString("base64url"),
+          });
+        }
       } else if (response.body) {
         const reader = response.body.getReader();
         while (true) {
@@ -576,6 +618,7 @@ export class AgentRuntime {
     input: ReturnType<typeof RelaySocketOpenSchema.parse>,
   ): Promise<void> {
     this.policy.authorizeSocket(input.path);
+    await this.workspace.assertSocket(input.path, input.query);
     if (
       runtime.secure.kind !== "opencode-pty" ||
       !runtime.secure.allows("pty.connect")

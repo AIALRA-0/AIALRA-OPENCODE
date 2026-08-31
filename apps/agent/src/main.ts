@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     });
     await saveConfig(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         server,
         ...identity,
         displayName: required("--name"),
@@ -50,6 +50,8 @@ async function main(): Promise<void> {
         expectedVersion: required("--expected-version"),
         expectedOpenapiSha256: required("--openapi-sha256"),
         manifestPath: resolve(required("--manifest")),
+        workspaceRoot: resolve(required("--workspace-root")),
+        workspaceLabel: required("--workspace-label"),
       },
       option("--config") ? resolve(option("--config")!) : defaultConfigPath(),
     );

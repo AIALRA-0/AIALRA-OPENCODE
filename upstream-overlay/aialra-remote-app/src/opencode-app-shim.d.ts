@@ -1,5 +1,5 @@
 declare module "@opencode-ai/app" {
-  import type { Component, ParentComponent } from "solid-js";
+  import type { Component, JSX, ParentComponent } from "solid-js";
 
   export type ServerKey = string & { readonly __serverKey: unique symbol };
 
@@ -21,12 +21,26 @@ declare module "@opencode-ai/app" {
   export const AppBaseProviders: ParentComponent;
   export const AppInterface: Component<{
     defaultServer: ServerKey;
-    servers: Array<{ type: "http"; name: string; http: { url: string } }>;
+    servers: Array<{
+      type: "http";
+      displayName?: string;
+      label?: string;
+      http: { url: string };
+    }>;
+    serverScoped?: JSX.Element;
   }>;
   export const PlatformProvider: ParentComponent<{ value: Platform }>;
   export const ServerConnection: {
     Key: {
       make(value: string): ServerKey;
+    };
+  };
+  export function useServer(): {
+    key: ServerKey;
+    projects: {
+      open(directory: string): void;
+      touch(directory: string): void;
+      list(): Array<{ worktree: string }>;
     };
   };
 }

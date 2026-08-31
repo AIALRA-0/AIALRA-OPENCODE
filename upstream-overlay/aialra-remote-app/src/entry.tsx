@@ -4,6 +4,7 @@ import {
   AppInterface,
   PlatformProvider,
   ServerConnection,
+  useServer,
   type Platform,
 } from "@opencode-ai/app";
 import { For, Show, createSignal } from "solid-js";
@@ -19,6 +20,7 @@ import { createRemoteFetch, virtualOrigin } from "./remote-fetch";
 import { installRemoteWebSocket } from "./remote-websocket";
 
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
+const HOST_ROUTE_KEY = "aialra-opencode.host-route";
 
 function BootstrapPanel(props: { hosts: HostDescriptor[] }) {
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
@@ -113,7 +115,11 @@ function BootstrapPanel(props: { hosts: HostDescriptor[] }) {
   );
 }
 
-function HostManager(props: { hosts: HostDescriptor[] }) {
+function HostManager(props: {
+  hosts: HostDescriptor[];
+  selected: HostDescriptor;
+  onSelect(host: HostDescriptor): void;
+}) {
   const [open, setOpen] = createSignal(false);
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
   const [busy, setBusy] = createSignal(false);
@@ -132,24 +138,77 @@ function HostManager(props: { hosts: HostDescriptor[] }) {
     }
   };
 
+  const workspaceName = (host: HostDescriptor) =>
+    host.mode === "vps" ? "VPS 工作区" : "远程工作区";
+  const modeName = (host: HostDescriptor) =>
+    host.mode === "vps" ? "VPS" : "远程";
+
   return (
-    <aside
+    <header
       style={{
         position: "fixed",
-        top: "0.75rem",
-        right: "0.75rem",
+        top: "0.45rem",
+        left: "50%",
+        transform: "translateX(-50%)",
         "z-index": 2147483000,
         "font-family": "ui-sans-serif, system-ui, sans-serif",
+        display: "flex",
+        gap: "0.45rem",
+        "align-items": "center",
       }}
     >
-      <button onClick={() => setOpen((value) => !value)}>主机管理</button>
+      <nav
+        aria-label="执行工作区"
+        style={{
+          display: "flex",
+          gap: "0.25rem",
+          padding: "0.2rem",
+          background: "Canvas",
+          border: "1px solid GrayText",
+          "border-radius": "0.55rem",
+          "box-shadow": "0 0.25rem 0.8rem rgb(0 0 0 / 0.2)",
+        }}
+      >
+        <For each={props.hosts}>
+          {(host) => (
+            <button
+              type="button"
+              aria-pressed={host.hostId === props.selected.hostId}
+              disabled={host.state !== "online" && host.state !== "degraded"}
+              onClick={() => props.onSelect(host)}
+              style={{
+                padding: "0.38rem 0.65rem",
+                border: "0",
+                "border-radius": "0.38rem",
+                background:
+                  host.hostId === props.selected.hostId
+                    ? "Highlight"
+                    : "transparent",
+                color:
+                  host.hostId === props.selected.hostId
+                    ? "HighlightText"
+                    : "CanvasText",
+                cursor: "pointer",
+              }}
+            >
+              {workspaceName(host)} ·{" "}
+              {host.state === "online" ? "在线" : host.state}
+            </button>
+          )}
+        </For>
+      </nav>
+      <button type="button" onClick={() => setOpen((value) => !value)}>
+        主机管理
+      </button>
       <Show when={open()}>
         <section
           role="dialog"
           aria-label="主机管理"
           style={{
             width: "min(24rem, calc(100vw - 2rem))",
-            margin: "0.5rem 0 0",
+            position: "absolute",
+            top: "2.65rem",
+            right: "0",
             padding: "1rem",
             background: "Canvas",
             color: "CanvasText",
@@ -164,8 +223,21 @@ function HostManager(props: { hosts: HostDescriptor[] }) {
           <ul style={{ margin: "0 0 1rem", padding: "0 0 0 1.25rem" }}>
             <For each={props.hosts}>
               {(host) => (
-                <li>
-                  {host.displayName} · {host.platform} · {host.state}
+                <li style={{ "margin-bottom": "0.65rem" }}>
+                  <strong>{host.displayName}</strong>
+                  <div>
+                    {modeName(host)} · {host.platform} · {host.state}
+                  </div>
+                  <div>
+                    Agent {host.agentVersion} · OpenCode{" "}
+                    {host.opencodeVersion ?? "未知"}
+                  </div>
+                  <div>
+                    工作区：
+                    {host.capabilities.includes("workspace-boundary")
+                      ? "已隔离"
+                      : "待升级"}
+                  </div>
                 </li>
               )}
             </For>
@@ -207,8 +279,23 @@ function HostManager(props: { hosts: HostDescriptor[] }) {
           </Show>
         </section>
       </Show>
-    </aside>
+    </header>
   );
+}
+
+function HostWorkspaceBootstrap(props: {
+  host: HostDescriptor;
+  workspaceRoot: string;
+}) {
+  const server = useServer();
+  if (
+    !server.projects
+      .list()
+      .some((project) => project.worktree === props.workspaceRoot)
+  )
+    server.projects.open(props.workspaceRoot);
+  server.projects.touch(props.workspaceRoot);
+  return null;
 }
 
 async function start(): Promise<void> {
@@ -236,14 +323,54 @@ async function start(): Promise<void> {
     if (url.origin === location.origin) return nativeFetch(input, init);
     return Promise.reject(new TypeError("unregistered network destination"));
   }) as typeof fetch;
-  const servers = available.map((host) => ({
+  const serverFor = (host: HostDescriptor) => ({
     type: "http" as const,
-    name: host.displayName,
+    displayName: host.displayName,
+    label: host.mode === "vps" ? "VPS 工作区" : "远程工作区",
     http: { url: virtualOrigin(host.hostId) },
-  }));
+  });
   const stored = localStorage.getItem(DEFAULT_SERVER_KEY);
   const initial =
-    servers.find((server) => server.http.url === stored) ?? servers[0]!;
+    available.find((host) => host.hostId === stored) ??
+    available.find((host) => virtualOrigin(host.hostId) === stored) ??
+    available.find((host) => host.mode === "vps") ??
+    available[0]!;
+  const [selected, setSelected] = createSignal(initial);
+  const workspaceRoots = new Map<string, string>();
+  const routes = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(HOST_ROUTE_KEY) ?? "{}") as Record<
+        string,
+        string
+      >;
+    } catch {
+      return {};
+    }
+  })();
+  const selectHost = (host: HostDescriptor) => {
+    if (host.state !== "online" && host.state !== "degraded") return;
+    const current = selected();
+    routes[current.hostId] =
+      location.pathname + location.search + location.hash;
+    localStorage.setItem(HOST_ROUTE_KEY, JSON.stringify(routes));
+    localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
+    setSelected(host);
+    history.replaceState(null, "", routes[host.hostId] ?? "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  for (const host of available) {
+    const response = await remoteFetch(
+      new URL("/path", virtualOrigin(host.hostId)),
+    );
+    if (!response.ok)
+      throw new Error(
+        `${host.displayName} workspace path returned ${response.status}`,
+      );
+    const value = (await response.json()) as { directory?: string };
+    if (!value.directory)
+      throw new Error(`${host.displayName} workspace path is unavailable`);
+    workspaceRoots.set(host.hostId, value.directory);
+  }
   const platform: Platform = {
     platform: "web",
     version: "remote-0.1.0",
@@ -268,10 +395,17 @@ async function start(): Promise<void> {
       };
     },
     fetch: remoteFetch,
-    getDefaultServer: async () => ServerConnection.Key.make(initial.http.url),
+    getDefaultServer: async () =>
+      ServerConnection.Key.make(virtualOrigin(selected().hostId)),
     setDefaultServer(value) {
-      if (value === null) localStorage.removeItem(DEFAULT_SERVER_KEY);
-      else localStorage.setItem(DEFAULT_SERVER_KEY, value);
+      if (value === null) {
+        localStorage.removeItem(DEFAULT_SERVER_KEY);
+        return;
+      }
+      const host = available.find(
+        (candidate) => virtualOrigin(candidate.hostId) === value,
+      );
+      if (host) localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
     },
   };
   const root = document.getElementById("root");
@@ -280,13 +414,30 @@ async function start(): Promise<void> {
   render(
     () => (
       <>
-        <HostManager hosts={hosts} />
+        <HostManager
+          hosts={hosts}
+          selected={selected()}
+          onSelect={selectHost}
+        />
         <PlatformProvider value={platform}>
           <AppBaseProviders>
-            <AppInterface
-              defaultServer={ServerConnection.Key.make(initial.http.url)}
-              servers={servers}
-            />
+            <Show when={selected()} keyed>
+              {(host) => {
+                const server = serverFor(host);
+                return (
+                  <AppInterface
+                    defaultServer={ServerConnection.Key.make(server.http.url)}
+                    servers={[server]}
+                    serverScoped={
+                      <HostWorkspaceBootstrap
+                        host={host}
+                        workspaceRoot={workspaceRoots.get(host.hostId)!}
+                      />
+                    }
+                  />
+                );
+              }}
+            </Show>
           </AppBaseProviders>
         </PlatformProvider>
       </>

@@ -1,11 +1,15 @@
 export interface HostDescriptor {
   hostId: string;
   displayName: string;
+  mode: "vps" | "remote";
   state: "online" | "degraded" | "offline" | "unsupported";
   platform: "windows" | "linux";
+  agentVersion: string;
   opencodeVersion: string | null;
   openapiSha256: string | null;
   upstreamCommit: string | null;
+  capabilities: string[];
+  lastSeenAt: string | null;
 }
 
 export interface PairingCode {

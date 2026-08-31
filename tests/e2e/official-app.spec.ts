@@ -114,11 +114,16 @@ test("runs the zero-patch official App and recovers after a control-plane restar
 
   let control: ChildProcess | null = null;
   let agent: ChildProcess | null = null;
+  const fixture = await mkdtemp(join(tmpdir(), "AIALRA-OPENCODE-app-"));
   try {
-    control = tsx("apps/control-plane/scripts/e2e-server.ts");
+    const e2eEnv = {
+      ...process.env,
+      AIALRA_OPENCODE_E2E_ROOT: fixture,
+    };
+    control = tsx("apps/control-plane/scripts/e2e-server.ts", e2eEnv);
     await waitForHealth(control);
     agent = tsx("apps/agent/scripts/local-e2e.ts", {
-      ...process.env,
+      ...e2eEnv,
       AIALRA_OPENCODE_E2E_BINARY: binary,
       AIALRA_OPENCODE_E2E_HOLD: "1",
       AIALRA_OPENCODE_E2E_BROWSER_ONLY: "1",
@@ -127,15 +132,54 @@ test("runs the zero-patch official App and recovers after a control-plane restar
 
     await page.goto(origin);
     await expect(
+      page.getByRole("navigation", { name: "执行工作区" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /VPS 工作区|远程工作区/u }).first(),
+    ).toBeVisible();
+    await expect(
       page.getByRole("button", { name: /^(新建会话|New session)$/u }),
     ).toBeVisible();
+    await expect
+      .poll(async () =>
+        page
+          .getByRole("button", { name: /^(新建会话|New session)$/u })
+          .isEnabled(),
+      )
+      .toBe(true);
+    await page
+      .getByRole("button", { name: /^(新建会话|New session)$/u })
+      .click();
+    await expect.poll(() => new URL(page.url()).pathname).not.toBe("/");
+    await page.goto(origin);
+    await expect(page.locator("body")).not.toContainText(".opencode.invalid");
     await page.getByRole("button", { name: /^(设置|Settings)$/u }).click();
     await page.getByRole("tab", { name: /^(服务器|Servers)$/u }).click();
-    const host = await page.evaluate(() =>
-      [...document.querySelectorAll("body *")]
-        .map((element) => element.textContent?.trim() ?? "")
-        .find((text) => /^h-[a-z2-7]+\.opencode\.invalid$/u.test(text)),
-    );
+    const host = await page.evaluate(async () => {
+      const response = await fetch("/api/v1/hosts");
+      const data = (await response.json()) as {
+        hosts: Array<{ hostId: string }>;
+      };
+      const hostId = data.hosts[0]?.hostId;
+      if (!hostId) return undefined;
+      const digest = new Uint8Array(
+        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(hostId)),
+      );
+      const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+      let bits = 0;
+      let value = 0;
+      let encoded = "";
+      for (const byte of digest) {
+        value = (value << 8) | byte;
+        bits += 8;
+        while (bits >= 5) {
+          encoded += alphabet[(value >>> (bits - 5)) & 31];
+          bits -= 5;
+        }
+      }
+      if (bits > 0) encoded += alphabet[(value << (5 - bits)) & 31];
+      return `h-${encoded}.opencode.invalid`;
+    });
     expect(host).toMatch(/^h-[a-z2-7]+\.opencode\.invalid$/u);
     const providerReadback = await page.evaluate(async (virtualHost) => {
       const health = await fetch(`https://${virtualHost}/global/health`);
@@ -206,7 +250,7 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     ).toBeVisible();
 
     await stop(control);
-    control = tsx("apps/control-plane/scripts/e2e-server.ts");
+    control = tsx("apps/control-plane/scripts/e2e-server.ts", e2eEnv);
     await waitForHealth(control);
 
     await expect
@@ -231,5 +275,114 @@ test("runs the zero-patch official App and recovers after a control-plane restar
   } finally {
     await stop(agent);
     await stop(control);
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("keeps VPS and remote workspaces isolated", async ({ page }) => {
+  const binary = process.env.AIALRA_OPENCODE_E2E_BINARY;
+  if (!binary) test.skip(true, "AIALRA_OPENCODE_E2E_BINARY is required");
+
+  let control: ChildProcess | null = null;
+  let vpsAgent: ChildProcess | null = null;
+  let remoteAgent: ChildProcess | null = null;
+  const fixture = await mkdtemp(join(tmpdir(), "AIALRA-OPENCODE-dual-"));
+  const vpsWorkspace = await mkdtemp(join(tmpdir(), "AIALRA-OPENCODE-vps-"));
+  const remoteWorkspace = await mkdtemp(
+    join(tmpdir(), "AIALRA-OPENCODE-remote-"),
+  );
+  try {
+    const e2eEnv = {
+      ...process.env,
+      AIALRA_OPENCODE_E2E_ROOT: fixture,
+      AIALRA_OPENCODE_E2E_BINARY: binary,
+      AIALRA_OPENCODE_E2E_HOLD: "1",
+      AIALRA_OPENCODE_E2E_BROWSER_ONLY: "1",
+    };
+    control = tsx("apps/control-plane/scripts/e2e-server.ts", e2eEnv);
+    await waitForHealth(control);
+    vpsAgent = tsx("apps/agent/scripts/local-e2e.ts", {
+      ...e2eEnv,
+      AIALRA_OPENCODE_E2E_NAME: "AIALRA VPS",
+      AIALRA_OPENCODE_E2E_MODE: "vps",
+      AIALRA_OPENCODE_E2E_WORKSPACE: vpsWorkspace,
+    });
+    remoteAgent = tsx("apps/agent/scripts/local-e2e.ts", {
+      ...e2eEnv,
+      AIALRA_OPENCODE_E2E_NAME: "AIALRA Windows",
+      AIALRA_OPENCODE_E2E_MODE: "remote",
+      AIALRA_OPENCODE_E2E_WORKSPACE: remoteWorkspace,
+    });
+    await Promise.all([
+      waitForLine(vpsAgent, '"browserReady":true'),
+      waitForLine(remoteAgent, '"browserReady":true'),
+    ]);
+
+    await page.goto(origin);
+    await expect(
+      page.getByRole("navigation", { name: "执行工作区" }),
+    ).toBeVisible();
+    const vpsButton = page.getByRole("button", { name: /VPS 工作区/u });
+    const remoteButton = page.getByRole("button", { name: /远程工作区/u });
+    await expect(vpsButton).toBeVisible();
+    await expect(remoteButton).toBeVisible();
+    await expect(vpsButton).toHaveAttribute("aria-pressed", "true");
+    await expect(remoteButton).toHaveAttribute("aria-pressed", "false");
+
+    const roots = await page.evaluate(async () => {
+      const response = await fetch("/api/v1/hosts");
+      const data = (await response.json()) as {
+        hosts: Array<{ hostId: string; mode: string; state: string }>;
+      };
+      const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+      const virtualHost = async (hostId: string) => {
+        const digest = new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(hostId),
+          ),
+        );
+        let bits = 0;
+        let value = 0;
+        let encoded = "";
+        for (const byte of digest) {
+          value = (value << 8) | byte;
+          bits += 8;
+          while (bits >= 5) {
+            encoded += alphabet[(value >>> (bits - 5)) & 31];
+            bits -= 5;
+          }
+        }
+        if (bits > 0) encoded += alphabet[(value << (5 - bits)) & 31];
+        return `https://h-${encoded}.opencode.invalid`;
+      };
+      const result: Record<string, string> = {};
+      for (const host of data.hosts.filter(
+        (candidate) => candidate.state === "online",
+      )) {
+        const path = await fetch(`${await virtualHost(host.hostId)}/path`);
+        result[host.mode] = String((await path.json()).directory ?? "");
+      }
+      return result;
+    });
+    expect(roots.vps).toContain("AIALRA-OPENCODE-vps-");
+    expect(roots.remote).toContain("AIALRA-OPENCODE-remote-");
+    expect(roots.vps).not.toBe(roots.remote);
+
+    await remoteButton.click();
+    await expect(remoteButton).toHaveAttribute("aria-pressed", "true");
+    await expect(vpsButton).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      page.getByRole("button", { name: /^(新建会话|New session)$/u }),
+    ).toBeEnabled();
+  } finally {
+    await stop(vpsAgent);
+    await stop(remoteAgent);
+    await stop(control);
+    await Promise.all([
+      rm(fixture, { recursive: true, force: true }),
+      rm(vpsWorkspace, { recursive: true, force: true }),
+      rm(remoteWorkspace, { recursive: true, force: true }),
+    ]);
   }
 });
