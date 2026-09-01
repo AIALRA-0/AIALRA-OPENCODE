@@ -86,6 +86,21 @@ function decodeRouteServerKey(segment: string): string | null {
   }
 }
 
+function encodeRouteDirectory(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join(
+    "",
+  );
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
+}
+
+function defaultWorkspaceRoute(root: string | undefined): string {
+  return root ? `/${encodeRouteDirectory(root)}/session` : "/";
+}
+
 function routeBelongsToHost(route: string, hostId: string): boolean {
   const match = route.match(/^\/server\/([^/]+)(?:\/|$)/u);
   if (!match) return route === "/" || route.startsWith("/new-session");
@@ -470,9 +485,14 @@ async function start(): Promise<void> {
     localStorage.setItem(HOST_ROUTE_KEY, JSON.stringify(routes));
     localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
     setSelected(host);
-    const next = routeBelongsToHost(routes[host.hostId] ?? "/", host.hostId)
-      ? (routes[host.hostId] ?? "/")
-      : "/";
+  };
+
+  const activateHost = (host: HostDescriptor) => {
+    const saved = routes[host.hostId];
+    const next =
+      saved && saved !== "/" && routeBelongsToHost(saved, host.hostId)
+        ? saved
+        : defaultWorkspaceRoute(workspaceRoots()[host.hostId]);
     history.replaceState(null, "", next);
     if (!routeSyncScheduled) {
       routeSyncScheduled = true;
@@ -595,6 +615,7 @@ async function start(): Promise<void> {
               workspaceRoots={workspaceRoots}
               ensureWorkspaceRoot={loadWorkspaceRoot}
               onSelect={selectHost}
+              onActivate={activateHost}
               onRefresh={() => location.reload()}
             />
             <HostWorkspaceBootstrap

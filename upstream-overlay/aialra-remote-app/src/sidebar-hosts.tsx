@@ -29,6 +29,7 @@ const CLASSIC_LAYOUT_MARKER = "aialra-classic-layout-default-v1";
 const CLASSIC_LAYOUT_DEFAULT_APPLIED =
   "aialra-classic-layout-default-applied-v1";
 const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
+const SIDEBAR_PREPARE_SWITCH_EVENT = "aialra-prepare-sidebar-switch";
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
@@ -72,25 +73,66 @@ function sidebarPanel(): HTMLElement | null {
 
 function SidebarMount(props: { children: JSX.Element }) {
   const [mount, setMount] = createSignal<HTMLElement | null>(null);
-  const sync = () => setMount(sidebarPanel());
   onMount(() => {
+    const fallback = document.createElement("div");
+    fallback.dataset.aialraSidebarFallback = "true";
+    fallback.style.cssText =
+      "display:none;position:fixed;inset-block:2.5rem 0;inset-inline-start:4rem;width:280px;z-index:50;overflow:auto;background:var(--background-base);";
+    document.body.append(fallback);
+
+    let previousPanel: HTMLElement | null = null;
+    let previousHidden = false;
+    let prepared = false;
+    let preparedPanel: HTMLElement | null = null;
+    const setTarget = (target: HTMLElement) => {
+      if (target !== mount()) setMount(target);
+      fallback.style.display =
+        target === fallback && window.matchMedia("(min-width: 1280px)").matches
+          ? "block"
+          : "none";
+    };
     const update = () => {
-      sync();
       const panel = sidebarPanel();
-      if (!panel) return;
-      if (
-        panel.hasAttribute("inert") ||
-        panel.getAttribute("aria-hidden") === "true"
-      )
+      const hidden =
+        panel?.hasAttribute("inert") ||
+        panel?.getAttribute("aria-hidden") === "true";
+      if (prepared) {
+        if (panel && panel !== preparedPanel && !hidden) {
+          prepared = false;
+          preparedPanel = null;
+          setTarget(panel);
+        } else {
+          setTarget(fallback);
+        }
+      } else {
+        if (panel && !hidden) setTarget(panel);
+        else setTarget(fallback);
+      }
+      if (panel !== previousPanel) {
+        previousPanel = panel;
+        previousHidden = false;
+      }
+      if (panel && hidden && !previousHidden)
         window.dispatchEvent(new Event(SIDEBAR_OPEN_EVENT));
+      previousHidden = !!hidden;
+    };
+    const prepare = () => {
+      prepared = true;
+      preparedPanel = sidebarPanel();
+      setTarget(fallback);
     };
     update();
+    window.addEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
     const observer = new MutationObserver(update);
     observer.observe(document.body, {
       childList: true,
       subtree: true,
     });
-    onCleanup(() => observer.disconnect());
+    onCleanup(() => {
+      observer.disconnect();
+      window.removeEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
+      fallback.remove();
+    });
   });
   return (
     <Show when={mount()}>
@@ -142,6 +184,7 @@ export function HostSidebar(props: {
   workspaceRoots: Accessor<Record<string, string>>;
   ensureWorkspaceRoot(host: HostDescriptor): Promise<string | undefined>;
   onSelect(host: HostDescriptor): void;
+  onActivate(host: HostDescriptor): void;
   onRefresh(): void;
 }) {
   const server = useServer();
@@ -152,6 +195,7 @@ export function HostSidebar(props: {
   const [error, setError] = createSignal<string | null>(null);
   const [switching, setSwitching] = createSignal<string | null>(null);
   let switchSequence = 0;
+  let activationTimer: number | undefined;
 
   const selectedHost = () =>
     props.hosts.find((host) => host.hostId === props.selectedHostId());
@@ -161,13 +205,22 @@ export function HostSidebar(props: {
     if (host.hostId === props.selectedHostId()) return;
     const sequence = ++switchSequence;
     setSwitching(host.hostId);
+    window.dispatchEvent(new Event(SIDEBAR_PREPARE_SWITCH_EVENT));
     props.onSelect(host);
-    queueMicrotask(() => {
+    if (activationTimer !== undefined) window.clearTimeout(activationTimer);
+    activationTimer = window.setTimeout(() => {
+      activationTimer = undefined;
+      if (switchSequence !== sequence) return;
+      props.onActivate(host);
       server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
-      if (switchSequence === sequence) setSwitching(null);
-    });
+      setSwitching(null);
+    }, 120);
     void props.ensureWorkspaceRoot(host);
   };
+
+  onCleanup(() => {
+    if (activationTimer !== undefined) window.clearTimeout(activationTimer);
+  });
 
   const openSession = async (host: HostDescriptor) => {
     if (busyAction()) return;
@@ -287,7 +340,11 @@ export function HostSidebar(props: {
                         size="small"
                         variant="ghost"
                         class="mt-2 w-full justify-start"
-                        disabled={busyAction() !== null || !root()}
+                        disabled={
+                          busyAction() !== null ||
+                          !root() ||
+                          switching() !== null
+                        }
                         aria-busy={busyAction() === `new-${host.hostId}`}
                         onClick={() => void openSession(host)}
                       >
