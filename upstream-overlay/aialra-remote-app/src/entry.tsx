@@ -28,7 +28,11 @@ import {
 import { BrowserRelay } from "./relay";
 import { createRemoteFetch, virtualOrigin } from "./remote-fetch";
 import { installRemoteWebSocket } from "./remote-websocket";
-import { ClassicLayoutPreference, HostSidebar } from "./sidebar-hosts";
+import {
+  ClassicLayoutPreference,
+  HostSidebar,
+  SidebarLayoutBridge,
+} from "./sidebar-hosts";
 import { RequestStatusSurface } from "./request-status";
 
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
@@ -582,6 +586,7 @@ async function start(): Promise<void> {
             // application render immediately and let request-level status
             // surfaces report host readiness instead.
             disableHealthCheck
+            serverScoped={<SidebarLayoutBridge />}
           >
             <ClassicLayoutPreference />
             <HostSidebar

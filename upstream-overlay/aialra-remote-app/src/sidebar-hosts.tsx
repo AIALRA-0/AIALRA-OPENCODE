@@ -1,5 +1,6 @@
 import {
   ServerConnection,
+  useLayout,
   useServer,
   useSettings,
   useTabs,
@@ -27,6 +28,7 @@ import { virtualOrigin } from "./remote-fetch";
 const CLASSIC_LAYOUT_MARKER = "aialra-classic-layout-default-v1";
 const CLASSIC_LAYOUT_DEFAULT_APPLIED =
   "aialra-classic-layout-default-applied-v1";
+const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
@@ -70,45 +72,23 @@ function sidebarPanel(): HTMLElement | null {
 
 function SidebarMount(props: { children: JSX.Element }) {
   const [mount, setMount] = createSignal<HTMLElement | null>(null);
-  let lastOpenAt = 0;
-  let queued = false;
   const sync = () => setMount(sidebarPanel());
   onMount(() => {
     const update = () => {
-      if (queued) return;
       sync();
       const panel = sidebarPanel();
       if (!panel) return;
       if (
         panel.hasAttribute("inert") ||
         panel.getAttribute("aria-hidden") === "true"
-      ) {
-        // The upstream router can close the desktop panel while changing the
-        // active server. Re-open it after the transition so the workspace
-        // controls remain keyboard-accessible; debounce the click to avoid a
-        // mutation-observer feedback loop.
-        if (Date.now() - lastOpenAt < 250) return;
-        const toggle = document.querySelector<HTMLButtonElement>(
-          'button[aria-label="Toggle sidebar"], button[aria-label="切换侧栏"]',
-        );
-        if (toggle) {
-          queued = true;
-          lastOpenAt = Date.now();
-          toggle.click();
-          window.setTimeout(() => {
-            queued = false;
-            update();
-          }, 260);
-        }
-      }
+      )
+        window.dispatchEvent(new Event(SIDEBAR_OPEN_EVENT));
     };
     update();
     const observer = new MutationObserver(update);
     observer.observe(document.body, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ["inert", "aria-hidden"],
     });
     onCleanup(() => observer.disconnect());
   });
@@ -117,6 +97,17 @@ function SidebarMount(props: { children: JSX.Element }) {
       {(target) => <Portal mount={target()}>{props.children}</Portal>}
     </Show>
   );
+}
+
+export function SidebarLayoutBridge() {
+  const layout = useLayout();
+  onMount(() => {
+    const open = () => layout.sidebar.open();
+    open();
+    window.addEventListener(SIDEBAR_OPEN_EVENT, open);
+    onCleanup(() => window.removeEventListener(SIDEBAR_OPEN_EVENT, open));
+  });
+  return null;
 }
 
 function hostStateLabel(host: HostDescriptor): string {
@@ -173,10 +164,8 @@ export function HostSidebar(props: {
     props.onSelect(host);
     queueMicrotask(() => {
       server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
-    });
-    window.setTimeout(() => {
       if (switchSequence === sequence) setSwitching(null);
-    }, 180);
+    });
     void props.ensureWorkspaceRoot(host);
   };
 

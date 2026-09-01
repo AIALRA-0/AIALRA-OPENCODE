@@ -42,6 +42,12 @@ declare module "@opencode-ai/app" {
       setNewLayoutDesigns(value: boolean): void;
     };
   };
+  export function useLayout(): {
+    sidebar: {
+      opened(): boolean;
+      open(): void;
+    };
+  };
   export const ServerConnection: {
     Key: {
       make(value: string): ServerKey;
