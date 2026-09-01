@@ -218,7 +218,6 @@ export function HostSidebar(props: {
   const [error, setError] = createSignal<string | null>(null);
   const [switching, setSwitching] = createSignal<string | null>(null);
   let switchSequence = 0;
-  let activationTimer: number | undefined;
 
   const selectedHost = () =>
     props.hosts.find((host) => host.hostId === props.selectedHostId());
@@ -230,21 +229,15 @@ export function HostSidebar(props: {
     setSwitching(host.hostId);
     window.dispatchEvent(new Event(SIDEBAR_PREPARE_SWITCH_EVENT));
     props.onSelect(host);
-    if (activationTimer !== undefined) window.clearTimeout(activationTimer);
-    activationTimer = window.setTimeout(() => {
-      activationTimer = undefined;
+    queueMicrotask(() => {
       if (switchSequence !== sequence) return;
       props.onActivate(host);
       server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
       window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
       setSwitching(null);
-    }, 120);
+    });
     void props.ensureWorkspaceRoot(host);
   };
-
-  onCleanup(() => {
-    if (activationTimer !== undefined) window.clearTimeout(activationTimer);
-  });
 
   const openSession = async (host: HostDescriptor) => {
     if (busyAction()) return;
