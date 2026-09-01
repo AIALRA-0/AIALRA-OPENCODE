@@ -30,6 +30,7 @@ const CLASSIC_LAYOUT_DEFAULT_APPLIED =
   "aialra-classic-layout-default-applied-v1";
 const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
 const SIDEBAR_PREPARE_SWITCH_EVENT = "aialra-prepare-sidebar-switch";
+const SIDEBAR_SWITCH_SETTLED_EVENT = "aialra-sidebar-switch-settled";
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
@@ -83,7 +84,7 @@ function SidebarMount(props: { children: JSX.Element }) {
     let previousPanel: HTMLElement | null = null;
     let previousHidden = false;
     let prepared = false;
-    let preparedPanel: HTMLElement | null = null;
+    let reconcileTimer: number | undefined;
     const setTarget = (target: HTMLElement) => {
       if (target !== mount()) setMount(target);
       fallback.style.display =
@@ -97,13 +98,7 @@ function SidebarMount(props: { children: JSX.Element }) {
         panel?.hasAttribute("inert") ||
         panel?.getAttribute("aria-hidden") === "true";
       if (prepared) {
-        if (panel && panel !== preparedPanel && !hidden) {
-          prepared = false;
-          preparedPanel = null;
-          setTarget(panel);
-        } else {
-          setTarget(fallback);
-        }
+        setTarget(fallback);
       } else {
         if (panel && !hidden) setTarget(panel);
         else setTarget(fallback);
@@ -118,19 +113,47 @@ function SidebarMount(props: { children: JSX.Element }) {
     };
     const prepare = () => {
       prepared = true;
-      preparedPanel = sidebarPanel();
+      if (reconcileTimer !== undefined) {
+        window.clearTimeout(reconcileTimer);
+        reconcileTimer = undefined;
+      }
       setTarget(fallback);
+    };
+    const settle = () => {
+      if (reconcileTimer !== undefined) window.clearTimeout(reconcileTimer);
+      reconcileTimer = window.setTimeout(() => {
+        reconcileTimer = undefined;
+        const panel = sidebarPanel();
+        const hidden =
+          panel?.hasAttribute("inert") ||
+          panel?.getAttribute("aria-hidden") === "true";
+        if (!panel || hidden) return;
+        prepared = false;
+        setTarget(panel);
+      }, 240);
     };
     update();
     window.addEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
-    const observer = new MutationObserver(update);
+    window.addEventListener(SIDEBAR_SWITCH_SETTLED_EVENT, settle);
+    let updateFrame: number | undefined;
+    const scheduleUpdate = () => {
+      if (updateFrame !== undefined) return;
+      updateFrame = window.requestAnimationFrame(() => {
+        updateFrame = undefined;
+        update();
+      });
+    };
+    const observer = new MutationObserver(scheduleUpdate);
     observer.observe(document.body, {
       childList: true,
       subtree: true,
     });
     onCleanup(() => {
       observer.disconnect();
+      if (updateFrame !== undefined) window.cancelAnimationFrame(updateFrame);
+      if (reconcileTimer !== undefined) window.clearTimeout(reconcileTimer);
       window.removeEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
+      window.removeEventListener(SIDEBAR_SWITCH_SETTLED_EVENT, settle);
       fallback.remove();
     });
   });
@@ -213,6 +236,7 @@ export function HostSidebar(props: {
       if (switchSequence !== sequence) return;
       props.onActivate(host);
       server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
+      window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
       setSwitching(null);
     }, 120);
     void props.ensureWorkspaceRoot(host);
