@@ -459,9 +459,9 @@ export class AgentRuntime {
   ): Promise<void> {
     const controller = new AbortController();
     runtime.requests.set(request.requestId, controller);
+    let relayStage = "authorize";
     try {
       const route = this.policy.authorizeHttp(request);
-      await this.workspace.assertRequest(request);
       const scope =
         route.category === "event"
           ? "event.stream"
@@ -475,6 +475,36 @@ export class AgentRuntime {
         runtime.secure.kind !== expectedChannel
       )
         throw new Error("capability grant does not authorize this route");
+      // Stale project/session metadata is safe to answer with an empty
+      // shape before path validation. Running the strict validator first
+      // would turn harmless old registrations into visible boundary errors.
+      const safeMetadata = await this.workspace.safeMetadataRead(request);
+      if (safeMetadata) {
+        relayStage = "metadata-fallback";
+        process.stderr.write(
+          `[agent] workspace metadata filtered count=${safeMetadata.filteredCount} shape=${relayRouteShape(request.path)}\n`,
+        );
+        this.sendEncrypted(socket, runtime, {
+          type: "relay.http.response.start",
+          requestId: request.requestId,
+          status: safeMetadata.status ?? 200,
+          headers: { "content-type": "application/json" },
+        });
+        this.sendEncrypted(socket, runtime, {
+          type: "relay.http.chunk",
+          requestId: request.requestId,
+          sequence: 0,
+          bodyBase64: Buffer.from(safeMetadata.body).toString("base64url"),
+        });
+        this.sendEncrypted(socket, runtime, {
+          type: "relay.http.end",
+          requestId: request.requestId,
+          errorCode: null,
+        });
+        return;
+      }
+      relayStage = "workspace";
+      await this.workspace.assertRequest(request);
       const stalePtyId = stalePtyIdFromResource(request.path);
       if (
         request.method === "GET" &&
@@ -495,6 +525,7 @@ export class AgentRuntime {
         return;
       }
       const probe = await this.server.start();
+      relayStage = "fetch";
       const url = new URL(request.path, probe.baseUrl);
       url.search = request.query;
       if (url.origin !== probe.baseUrl.origin)
@@ -513,20 +544,40 @@ export class AgentRuntime {
         throw new Error("secret-bearing configuration write rejected");
       if (requestBody) init.body = requestBody;
       const response = await fetch(url, init);
+      relayStage = "response-policy";
       const sanitized = await sanitizedConfigurationResponse(
         request.path,
         response,
       );
+      const metadataRoute = /^(?:\/api\/)?(?:project|session)(?:\/|$)/u.test(
+        request.path,
+      );
+      const metadata =
+        !sanitized &&
+        metadataRoute &&
+        response.headers.get("content-type")?.includes("application/json")
+          ? await this.workspace.sanitizeMetadataResponse(
+              request.path,
+              new Uint8Array(await response.arrayBuffer()),
+            )
+          : null;
+      relayStage = "response-start";
       const responseHeaders = new Headers(response.headers);
-      if (sanitized) responseHeaders.delete("content-length");
+      if (sanitized || metadata) responseHeaders.delete("content-length");
+      if (metadata?.filteredCount) {
+        process.stderr.write(
+          `[agent] workspace metadata filtered count=${metadata.filteredCount} shape=${relayRouteShape(request.path)}\n`,
+        );
+      }
       this.sendEncrypted(socket, runtime, {
         type: "relay.http.response.start",
         requestId: request.requestId,
-        status: response.status,
+        status: metadata?.status ?? response.status,
         headers: this.policy.responseHeaders(responseHeaders),
       });
       let sequence = 0;
       if (sanitized) {
+        relayStage = "stream-sanitized";
         for (
           let offset = 0;
           offset < sanitized.byteLength;
@@ -543,10 +594,29 @@ export class AgentRuntime {
             bodyBase64: Buffer.from(chunk).toString("base64url"),
           });
         }
+      } else if (metadata) {
+        relayStage = "stream-metadata";
+        for (
+          let offset = 0;
+          offset < metadata.body.byteLength;
+          offset += MAX_RELAY_CHUNK_BYTES
+        ) {
+          const chunk = metadata.body.subarray(
+            offset,
+            Math.min(offset + MAX_RELAY_CHUNK_BYTES, metadata.body.byteLength),
+          );
+          this.sendEncrypted(socket, runtime, {
+            type: "relay.http.chunk",
+            requestId: request.requestId,
+            sequence: sequence++,
+            bodyBase64: Buffer.from(chunk).toString("base64url"),
+          });
+        }
       } else if (
         (request.path === "/path" || request.path === "/api/path") &&
         response.body
       ) {
+        relayStage = "stream-path";
         const raw = new Uint8Array(await response.arrayBuffer());
         const safe = this.workspace.sanitizePathResponse(request.path, raw);
         responseHeaders.delete("content-length");
@@ -567,6 +637,7 @@ export class AgentRuntime {
           });
         }
       } else if (response.body) {
+        relayStage = "stream-body";
         const reader = response.body.getReader();
         while (true) {
           const { done, value } = await reader.read();
@@ -598,8 +669,18 @@ export class AgentRuntime {
       const errorCode = relayErrorCode(error, controller.signal.aborted);
       if (errorCode !== "cancelled") {
         const route = relayRouteFingerprint(request.method, request.path);
+        const errorType =
+          error instanceof Error
+            ? error.name.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 48)
+            : typeof error;
+        const errorCodeDetail =
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code?: unknown }).code)
+                .replace(/[^a-zA-Z0-9_.-]/g, "")
+                .slice(0, 32)
+            : "none";
         process.stderr.write(
-          `[agent] HTTP relay failed: ${errorCode} method=${request.method} route=${route} shape=${relayRouteShape(request.path)}\n`,
+          `[agent] HTTP relay failed: ${errorCode} method=${request.method} route=${route} shape=${relayRouteShape(request.path)} stage=${relayStage} type=${errorType} cause=${errorCodeDetail}\n`,
         );
       }
       this.sendEncrypted(socket, runtime, {

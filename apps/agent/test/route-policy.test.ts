@@ -38,6 +38,20 @@ const manifest: RouteCapabilityManifest = {
       maxBodyBytes: 0,
       stream: "websocket",
     },
+    {
+      methods: ["GET"],
+      pathTemplate: "/api/model/default",
+      category: "read",
+      maxBodyBytes: 0,
+      stream: "none",
+    },
+    {
+      methods: ["GET"],
+      pathTemplate: "/api/fs/read/*",
+      category: "read",
+      maxBodyBytes: 0,
+      stream: "none",
+    },
   ],
 };
 
@@ -96,5 +110,30 @@ describe("route policy", () => {
       "websocket",
     );
     expect(() => policy.authorizeSocket("/socket/arbitrary")).toThrow();
+  });
+
+  it("accepts pinned compatibility aliases and file path wildcards", () => {
+    expect(
+      policy.authorizeHttp({
+        type: "relay.http.request",
+        requestId: "92b11e67-6f24-474f-9510-816e92a6a69f",
+        method: "GET",
+        path: "/api/model/default",
+        query: "",
+        headers: {},
+        bodyBase64: null,
+      }).category,
+    ).toBe("read");
+    expect(
+      policy.authorizeHttp({
+        type: "relay.http.request",
+        requestId: "92b11e67-6f24-474f-9510-816e92a6a69f",
+        method: "GET",
+        path: "/api/fs/read/src/lib/example.ts",
+        query: "",
+        headers: {},
+        bodyBase64: null,
+      }).category,
+    ).toBe("read");
   });
 });

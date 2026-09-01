@@ -212,7 +212,10 @@ export class BrowserRelay {
         state.channel,
         state.scopes,
       );
-      replacement.copyListeners(state.listeners);
+      const listeners = new Set(state.listeners);
+      state.listeners.clear();
+      replacement.copyListeners(listeners);
+      this.close(state);
       return replacement.send(payload);
     }
     if (!state.key) throw new Error("channel key is unavailable");
@@ -242,6 +245,9 @@ export class BrowserRelay {
 
   close(state: ChannelState): void {
     if (!this.channels.delete(state.channelId)) return;
+    for (const listener of state.listeners)
+      listener({ type: "relay.disconnected" });
+    state.listeners.clear();
     if (this.socket?.readyState === NativeWebSocket.OPEN) {
       this.socket.send(
         JSON.stringify({
@@ -333,7 +339,10 @@ export class BrowserRelay {
         for (const listener of state.listeners)
           listener({ type: "relay.disconnected" });
       } else if (code === "channel_missing") {
-        this.socket?.close(1012, "relay channel state mismatch");
+        // Browser WebSocket only accepts 1000 or 3000-4999 for application
+        // initiated closes; 1012 is a server-only status and raises a page
+        // error in Chromium instead of allowing the reconnect path to run.
+        this.socket?.close(4002, "relay channel state mismatch");
       }
       console.error(
         `[AIALRA relay] server rejected a relay operation: ${code}`,

@@ -20,6 +20,7 @@ declare module "@opencode-ai/app" {
 
   export const AppBaseProviders: ParentComponent;
   export const AppInterface: Component<{
+    children?: JSX.Element;
     defaultServer: ServerKey;
     servers: Array<{
       type: "http";
@@ -27,20 +28,60 @@ declare module "@opencode-ai/app" {
       label?: string;
       http: { url: string };
     }>;
+    disableHealthCheck?: boolean;
     serverScoped?: JSX.Element;
   }>;
   export const PlatformProvider: ParentComponent<{ value: Platform }>;
+  export function useSettings(): {
+    ready: () => boolean;
+    current: {
+      general?: { newLayoutDesigns?: boolean };
+    };
+    general: {
+      newLayoutDesigns: () => boolean;
+      setNewLayoutDesigns(value: boolean): void;
+    };
+  };
   export const ServerConnection: {
     Key: {
       make(value: string): ServerKey;
     };
   };
+  export function useTabs(): {
+    ready: (() => boolean) & { promise?: Promise<unknown> };
+    newDraft(
+      draft: { server: ServerKey; directory: string },
+      prompt?: string,
+    ): Promise<unknown>;
+  };
   export function useServer(): {
     key: ServerKey;
+    current:
+      | {
+          type: "http";
+          displayName?: string;
+          label?: string;
+          http: { url: string };
+        }
+      | undefined;
+    list: Array<{
+      type: "http";
+      displayName?: string;
+      label?: string;
+      http: { url: string };
+    }>;
+    setActive(key: ServerKey): void;
     projects: {
       open(directory: string): void;
       touch(directory: string): void;
-      list(): Array<{ worktree: string }>;
+      remove(directory: string): void;
+      list(): Array<{ worktree: string; expanded?: boolean }>;
+      forServer(key: ServerKey): {
+        open(directory: string): void;
+        touch(directory: string): void;
+        remove(directory: string): void;
+        list(): Array<{ worktree: string; expanded?: boolean }>;
+      };
     };
   };
 }

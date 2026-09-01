@@ -131,25 +131,19 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     await waitForLine(agent, '"browserReady":true');
 
     await page.goto(origin);
+    const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
+    await expect(workspaceNav).toBeVisible();
     await expect(
-      page.getByRole("navigation", { name: "执行工作区" }),
+      workspaceNav
+        .getByRole("button", { name: /VPS 工作区|远程工作区/u })
+        .first(),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /VPS 工作区|远程工作区/u }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /^(新建会话|New session)$/u }),
-    ).toBeVisible();
-    await expect
-      .poll(async () =>
-        page
-          .getByRole("button", { name: /^(新建会话|New session)$/u })
-          .isEnabled(),
-      )
-      .toBe(true);
-    await page
-      .getByRole("button", { name: /^(新建会话|New session)$/u })
-      .click();
+    const newSessionButton = workspaceNav.getByRole("button", {
+      name: /新建会话/u,
+    });
+    await expect(newSessionButton).toBeVisible();
+    await expect.poll(async () => newSessionButton.isEnabled()).toBe(true);
+    await newSessionButton.click();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe("/");
     await page.goto(origin);
     await expect(page.locator("body")).not.toContainText(".opencode.invalid");
@@ -178,9 +172,9 @@ test("runs the zero-patch official App and recovers after a control-plane restar
         }
       }
       if (bits > 0) encoded += alphabet[(value << (5 - bits)) & 31];
-      return `h-${encoded}.opencode.invalid`;
+      return `h-${encoded}.aialra.invalid`;
     });
-    expect(host).toMatch(/^h-[a-z2-7]+\.opencode\.invalid$/u);
+    expect(host).toMatch(/^h-[a-z2-7]+\.aialra\.invalid$/u);
     const providerReadback = await page.evaluate(async (virtualHost) => {
       const health = await fetch(`https://${virtualHost}/global/health`);
       const providers = await fetch(`https://${virtualHost}/provider`);
@@ -319,15 +313,19 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     ]);
 
     await page.goto(origin);
-    await expect(
-      page.getByRole("navigation", { name: "执行工作区" }),
-    ).toBeVisible();
-    const vpsButton = page.getByRole("button", { name: /VPS 工作区/u });
-    const remoteButton = page.getByRole("button", { name: /远程工作区/u });
+    const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
+    await expect(workspaceNav).toBeVisible();
+    const vpsButton = workspaceNav.getByRole("button", { name: /VPS 工作区/u });
+    const remoteButton = workspaceNav.getByRole("button", {
+      name: /远程工作区/u,
+    });
     await expect(vpsButton).toBeVisible();
     await expect(remoteButton).toBeVisible();
     await expect(vpsButton).toHaveAttribute("aria-pressed", "true");
     await expect(remoteButton).toHaveAttribute("aria-pressed", "false");
+
+    await expect(workspaceNav).toContainText("AIALRA VPS");
+    await expect(workspaceNav).toContainText("工作目录");
 
     const roots = await page.evaluate(async () => {
       const response = await fetch("/api/v1/hosts");
@@ -354,7 +352,7 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
           }
         }
         if (bits > 0) encoded += alphabet[(value << (5 - bits)) & 31];
-        return `https://h-${encoded}.opencode.invalid`;
+        return `https://h-${encoded}.aialra.invalid`;
       };
       const result: Record<string, string> = {};
       for (const host of data.hosts.filter(
@@ -372,9 +370,31 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     await remoteButton.click();
     await expect(remoteButton).toHaveAttribute("aria-pressed", "true");
     await expect(vpsButton).toHaveAttribute("aria-pressed", "false");
+    await expect(workspaceNav).toContainText("AIALRA Windows");
     await expect(
-      page.getByRole("button", { name: /^(新建会话|New session)$/u }),
+      workspaceNav.getByRole("button", { name: /新建会话/u }),
     ).toBeEnabled();
+
+    await expect(workspaceNav).toBeVisible();
+    await expect
+      .poll(() =>
+        workspaceNav.evaluate((element) => getComputedStyle(element).position),
+      )
+      .not.toBe("fixed");
+    await expect(page.locator("body")).not.toContainText(".opencode.invalid");
+
+    const switchDurations: number[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const target = index % 2 === 0 ? vpsButton : remoteButton;
+      const start = await page.evaluate(() => performance.now());
+      await target.click();
+      await expect(target).toHaveAttribute("aria-pressed", "true");
+      const end = await page.evaluate(() => performance.now());
+      switchDurations.push(end - start);
+    }
+    switchDurations.sort((left, right) => left - right);
+    const p95 = switchDurations[Math.ceil(switchDurations.length * 0.95) - 1]!;
+    expect(p95).toBeLessThan(500);
   } finally {
     await stop(vpsAgent);
     await stop(remoteAgent);

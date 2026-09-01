@@ -13,6 +13,7 @@
     "@noble/curves": "2.0.1",
     "@noble/hashes": "2.0.1",
     "@opencode-ai/app": "workspace:*",
+    "@opencode-ai/ui": "workspace:*",
     "solid-js": "catalog:"
   },
   "devDependencies": {

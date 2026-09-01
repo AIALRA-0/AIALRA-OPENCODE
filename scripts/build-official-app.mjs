@@ -62,6 +62,11 @@ execFileSync(bun, ["run", "--cwd", "packages/aialra-remote-app", "typecheck"], {
 });
 execFileSync(bun, ["run", "--cwd", "packages/aialra-remote-app", "build"], {
   cwd: upstream,
+  // The upstream app uses OPENCODE_CHANNEL (rather than VITE_* variables) to
+  // choose its initial layout fallback. Build the remote wrapper as a
+  // production channel so a new profile paints the classic shell immediately;
+  // an explicit persisted layout preference still wins after hydration.
+  env: { ...process.env, OPENCODE_CHANNEL: "prod" },
   stdio: "inherit",
 });
 

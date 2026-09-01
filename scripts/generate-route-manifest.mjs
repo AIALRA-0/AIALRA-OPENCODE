@@ -40,6 +40,33 @@ const excludedPaths = new Set([
 ]);
 const routes = [];
 
+// The published OpenCode App currently ships a small compatibility client in
+// addition to the `/doc` surface.  These read-only aliases are intentionally
+// pinned here instead of accepting an arbitrary `/api/*` path; older clients
+// use them for bootstrap metadata even when the server advertises the newer
+// typed API.  The Agent may answer some of these with a safe empty shape when
+// the pinned server no longer exposes the legacy endpoint.
+const compatibilityRoutes = [
+  ["GET", "/api/form/request"],
+  ["GET", "/api/mcp"],
+  ["GET", "/api/mcp/resource"],
+  ["GET", "/api/model/default"],
+  ["GET", "/api/plugin"],
+  ["GET", "/api/project"],
+  ["GET", "/api/project/current"],
+  ["GET", "/api/project/{projectID}/directories"],
+  ["GET", "/api/session/{sessionID}/form"],
+  ["GET", "/api/session/{sessionID}/form/{formID}"],
+  ["GET", "/api/session/{sessionID}/form/{formID}/state"],
+  ["GET", "/api/session/{sessionID}/instructions/entries"],
+  ["GET", "/api/session/{sessionID}/pending"],
+  ["GET", "/api/shell"],
+  ["GET", "/api/shell/{id}"],
+  ["GET", "/api/shell/{id}/output"],
+  ["GET", "/api/vcs/diff"],
+  ["GET", "/api/vcs/status"],
+];
+
 for (const [pathTemplate, item] of Object.entries(openapi.paths ?? {})) {
   if (pathTemplate.includes("/share") || excludedPaths.has(pathTemplate))
     continue;
@@ -79,6 +106,30 @@ for (const [pathTemplate, item] of Object.entries(openapi.paths ?? {})) {
   }
   routes.push(...grouped.values());
 }
+
+for (const [method, pathTemplate] of compatibilityRoutes) {
+  routes.push({
+    methods: [method],
+    pathTemplate,
+    category: "read",
+    maxBodyBytes: 0,
+    stream: "none",
+  });
+}
+
+// Do not create duplicate capability rows when an upstream release adds an
+// alias that was previously supplied by the compatibility list.
+const deduped = new Map();
+for (const route of routes) {
+  const key = `${route.pathTemplate}|${route.category}|${route.stream}|${route.maxBodyBytes}`;
+  const current = deduped.get(key);
+  if (current) {
+    current.methods = [...new Set([...current.methods, ...route.methods])];
+  } else {
+    deduped.set(key, { ...route, methods: [...route.methods] });
+  }
+}
+routes.splice(0, routes.length, ...deduped.values());
 
 routes.sort(
   (left, right) =>

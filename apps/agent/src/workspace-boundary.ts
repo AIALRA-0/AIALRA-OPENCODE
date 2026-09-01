@@ -12,6 +12,24 @@ const PATH_FIELDS = new Set([
   "worktree",
 ]);
 
+const METADATA_LIST_KEYS = new Set([
+  "data",
+  "entries",
+  "items",
+  "projects",
+  "results",
+  "sessions",
+]);
+
+const METADATA_PATH_KEYS = new Set([
+  "cwd",
+  "directory",
+  "root",
+  "target",
+  "worktree",
+]);
+const MAX_METADATA_RESPONSE_BYTES = 16 * 1024 * 1024;
+
 function contained(candidate: string, root: string): boolean {
   const rel = relative(root, candidate);
   return (
@@ -53,6 +71,126 @@ function pathValues(input: unknown, key = ""): string[] {
   );
 }
 
+function metadataResource(pathname: string): "project" | "session" | null {
+  const segments = pathname.split("/").filter(Boolean);
+  const namespace = segments[0] === "api" ? segments[1] : segments[0];
+  return namespace === "project" || namespace === "session" ? namespace : null;
+}
+
+function metadataPath(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  for (const [name, child] of Object.entries(value)) {
+    if (METADATA_PATH_KEYS.has(name.toLowerCase()) && typeof child === "string")
+      return child;
+    if ((name === "project" || name === "worktreeInfo") && child) {
+      const nested = metadataPath(child);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
+}
+
+interface MetadataSanitization {
+  body: Uint8Array;
+  status: number | null;
+  filteredCount: number;
+}
+
+function locationEnvelope(
+  root: string,
+  data: unknown,
+): Record<string, unknown> {
+  return {
+    location: {
+      directory: root,
+      project: { id: "aialra-workspace", directory: root },
+    },
+    data,
+  };
+}
+
+function compatibilityMetadata(
+  pathname: string,
+  root: string,
+): { body: Uint8Array; status: number | null } | null {
+  const json = (value: unknown, status: number | null = null) => ({
+    body: Buffer.from(JSON.stringify(value), "utf8"),
+    status,
+  });
+
+  // The published App client still probes these aliases while talking to the
+  // newer server API.  They are read-only compatibility responses, never a
+  // proxy for an arbitrary route or directory.
+  if (pathname === "/api/model/default")
+    return json(locationEnvelope(root, null));
+  if (pathname === "/api/project") return json([]);
+  if (pathname === "/api/project/current")
+    return json({ id: "aialra-workspace", directory: root });
+  if (/^\/api\/project\/[^/]+\/directories$/u.test(pathname))
+    return json([{ directory: root }]);
+  if (pathname === "/api/mcp") return json(locationEnvelope(root, []));
+  if (pathname === "/api/mcp/resource")
+    return json(locationEnvelope(root, { resources: [], templates: [] }));
+  if (pathname === "/api/form/request") return json(locationEnvelope(root, []));
+  if (pathname === "/api/plugin") return json(locationEnvelope(root, []));
+  if (pathname === "/api/vcs/diff" || pathname === "/api/vcs/status")
+    return json(locationEnvelope(root, []));
+  if (pathname === "/api/shell") return json(locationEnvelope(root, []));
+  if (/^\/api\/shell\/[^/]+(?:\/output)?$/u.test(pathname))
+    return json(locationEnvelope(root, []), 404);
+  if (/^\/api\/session\/[^/]+\/form(?:\/[^/]+(?:\/state)?)?$/u.test(pathname))
+    return json([]);
+  if (
+    /^\/api\/session\/[^/]+\/(?:pending|instructions\/entries)$/u.test(pathname)
+  )
+    return json([]);
+  return null;
+}
+
+function safeReadShape(
+  pathname: string,
+  root: string,
+): { body: Uint8Array; status: number | null } | null {
+  const json = (value: unknown, status: number | null = null) => ({
+    body: Buffer.from(JSON.stringify(value), "utf8"),
+    status,
+  });
+  if (pathname === "/path" || pathname === "/api/path")
+    return json({
+      state: root,
+      config: root,
+      worktree: root,
+      directory: root,
+      home: root,
+    });
+  if (pathname === "/provider" || pathname === "/agent" || pathname === "/mcp")
+    return json({});
+  if (
+    pathname === "/lsp" ||
+    pathname === "/permission" ||
+    pathname === "/question"
+  )
+    return json([]);
+  if (pathname === "/command" || pathname === "/vcs") return json([]);
+  if (pathname === "/config" || pathname === "/global/config") return json({});
+  if (
+    pathname === "/api/model" ||
+    pathname === "/api/provider" ||
+    pathname === "/api/agent"
+  )
+    return json(locationEnvelope(root, []));
+  if (pathname === "/api/reference" || pathname === "/api/command")
+    return json(locationEnvelope(root, []));
+  if (
+    pathname === "/api/permission/request" ||
+    pathname === "/api/question/request"
+  )
+    return json(locationEnvelope(root, []));
+  if (pathname === "/api/session") return json({ data: [], cursor: {} });
+  return null;
+}
+
 export class WorkspaceBoundary {
   private constructor(
     readonly root: string,
@@ -84,6 +222,15 @@ export class WorkspaceBoundary {
       throw new Error("workspace boundary rejected linked path");
   }
 
+  async isInside(value: string, base = this.root): Promise<boolean> {
+    try {
+      await this.assertPath(value, base);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async assertRequest(request: RelayHttpRequest): Promise<void> {
     const url = this.parseQuery(request.path, request.query);
     const headerDirectory = Object.entries(request.headers).find(
@@ -108,6 +255,48 @@ export class WorkspaceBoundary {
       throw new Error("workspace request JSON is invalid");
     }
     for (const value of pathValues(body)) await this.assertPath(value, base);
+  }
+
+  async safeMetadataRead(
+    request: RelayHttpRequest,
+  ): Promise<MetadataSanitization | null> {
+    if (request.method !== "GET") return null;
+    const url = this.parseQuery(request.path, request.query);
+    const headerDirectory = Object.entries(request.headers).find(
+      ([name]) => name.toLowerCase() === "x-opencode-directory",
+    )?.[1];
+    const directory = url.searchParams.get("directory") ?? headerDirectory;
+    const compatibility = compatibilityMetadata(request.path, this.root);
+    if (compatibility) {
+      // Compatibility aliases are safe to answer locally even for the valid
+      // workspace because the pinned upstream server does not expose all of
+      // the older client paths.
+      return { ...compatibility, filteredCount: 0 };
+    }
+    const resource = metadataResource(request.path);
+    if (!resource) {
+      if (!directory || (await this.isInside(directory))) return null;
+      const safe = safeReadShape(request.path, this.root);
+      return safe ? { ...safe, filteredCount: 1 } : null;
+    }
+    if (!directory || (await this.isInside(directory))) return null;
+    const segments = request.path.split("/").filter(Boolean);
+    const direct =
+      segments[0] === "api" ? segments.length > 2 : segments.length > 1;
+    const safe = safeReadShape(request.path, this.root);
+    if (safe) return { ...safe, filteredCount: 1 };
+    return {
+      body: Buffer.from(
+        request.path === "/api/session"
+          ? JSON.stringify({ data: [], cursor: {} })
+          : direct
+            ? "{}"
+            : "[]",
+        "utf8",
+      ),
+      status: direct ? 404 : 200,
+      filteredCount: 1,
+    };
   }
 
   async assertSocket(pathname: string, query: string): Promise<void> {
@@ -148,6 +337,75 @@ export class WorkspaceBoundary {
     } catch {
       return body;
     }
+  }
+
+  async sanitizeMetadataResponse(
+    pathname: string,
+    body: Uint8Array,
+  ): Promise<MetadataSanitization | null> {
+    const resource = metadataResource(pathname);
+    if (!resource) return null;
+    if (body.byteLength > MAX_METADATA_RESPONSE_BYTES)
+      throw new Error("workspace metadata response exceeds sanitization limit");
+    let value: unknown;
+    try {
+      value = JSON.parse(Buffer.from(body).toString("utf8"));
+    } catch {
+      throw new Error("workspace metadata response is not JSON");
+    }
+
+    let filteredCount = 0;
+    const filterList = async (items: unknown[]): Promise<unknown[]> => {
+      const output: unknown[] = [];
+      for (const item of items) {
+        const path = metadataPath(item);
+        if (!path || !(await this.isInside(path))) {
+          filteredCount += 1;
+          continue;
+        }
+        output.push(await filterValue(item, false));
+      }
+      return output;
+    };
+    const filterValue = async (
+      input: unknown,
+      listItem: boolean,
+    ): Promise<unknown> => {
+      if (Array.isArray(input)) {
+        return listItem
+          ? filterList(input)
+          : Promise.all(input.map((item) => filterValue(item, false)));
+      }
+      if (!input || typeof input !== "object") return input;
+      const output: Record<string, unknown> = {};
+      for (const [name, child] of Object.entries(input)) {
+        if (
+          Array.isArray(child) &&
+          METADATA_LIST_KEYS.has(name.toLowerCase())
+        ) {
+          output[name] = await filterList(child);
+        } else {
+          output[name] = await filterValue(child, false);
+        }
+      }
+      return output;
+    };
+
+    const segments = pathname.split("/").filter(Boolean);
+    const direct =
+      segments[0] === "api" ? segments.length > 2 : segments.length > 1;
+    const directPath = direct ? metadataPath(value) : undefined;
+    if (direct && (!directPath || !(await this.isInside(directPath)))) {
+      return { body: Buffer.from("{}", "utf8"), status: 404, filteredCount: 1 };
+    }
+    if (Array.isArray(value)) value = await filterList(value);
+    else value = await filterValue(value, false);
+
+    return {
+      body: Buffer.from(JSON.stringify(value), "utf8"),
+      status: null,
+      filteredCount,
+    };
   }
 }
 

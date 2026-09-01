@@ -2,7 +2,7 @@ import type { BrowserRelay, RelayChannel, RelayPayload } from "./relay";
 import { base64url, decoder, encoder, unbase64url } from "./codec";
 import { virtualOrigin } from "./remote-fetch";
 
-const VIRTUAL_SUFFIX = ".opencode.invalid";
+const VIRTUAL_SUFFIX = ".aialra.invalid";
 
 export function installRemoteWebSocket(
   relay: BrowserRelay,

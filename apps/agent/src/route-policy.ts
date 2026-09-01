@@ -45,11 +45,21 @@ function normalizedPath(value: string): string {
 function templateMatches(template: string, path: string): boolean {
   const expected = template.split("/").filter(Boolean);
   const actual = path.split("/").filter(Boolean);
-  if (expected.length !== actual.length) return false;
-  return expected.every(
-    (part, index) =>
-      (part.startsWith("{") && part.endsWith("}")) || part === actual[index],
-  );
+  // OpenAPI uses a trailing `*` for paths whose final value is an encoded
+  // file path and may therefore contain slashes.  Keep the wildcard limited
+  // to the final template segment; it never grants an arbitrary prefix.
+  const wildcard = expected.at(-1) === "*";
+  if (wildcard) {
+    if (actual.length < expected.length - 1) return false;
+  } else if (expected.length !== actual.length) {
+    return false;
+  }
+  return expected.every((part, index) => {
+    if (part === "*") return index === expected.length - 1;
+    return (
+      (part.startsWith("{") && part.endsWith("}")) || part === actual[index]
+    );
+  });
 }
 
 export class RoutePolicy {

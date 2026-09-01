@@ -4,7 +4,7 @@
   "upstreamCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
   "sourceOpenapiSha256": "c0af493bae06c8f50ae05474921570eb05f301c92a5f68f6a6365f530b719ad7",
   "openapiSha256": "dfb7d42a555389f0c662fa2b4a8af1d61633c96710cf54bce3ff2404e2e7d896",
-  "generatedAt": "2026-08-28T05:58:04Z",
+  "generatedAt": "2026-08-31T21:00:00Z",
   "routes": [
     {
       "methods": [
@@ -51,6 +51,15 @@
       "category": "event",
       "maxBodyBytes": 0,
       "stream": "sse"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/form/request",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
     },
     {
       "methods": [
@@ -155,7 +164,34 @@
       "methods": [
         "GET"
       ],
+      "pathTemplate": "/api/mcp",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/mcp/resource",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
       "pathTemplate": "/api/model",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/model/default",
       "category": "read",
       "maxBodyBytes": 0,
       "stream": "none"
@@ -185,6 +221,42 @@
       "pathTemplate": "/api/permission/saved/{id}",
       "category": "write",
       "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/plugin",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/project",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/project/{projectID}/directories",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/project/current",
+      "category": "read",
+      "maxBodyBytes": 0,
       "stream": "none"
     },
     {
@@ -345,7 +417,43 @@
       "methods": [
         "GET"
       ],
+      "pathTemplate": "/api/session/{sessionID}/form",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/form/{formID}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/form/{formID}/state",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
       "pathTemplate": "/api/session/{sessionID}/history",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/instructions/entries",
       "category": "read",
       "maxBodyBytes": 0,
       "stream": "none"
@@ -384,6 +492,15 @@
       "pathTemplate": "/api/session/{sessionID}/model",
       "category": "write",
       "maxBodyBytes": 16777216,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/session/{sessionID}/pending",
+      "category": "read",
+      "maxBodyBytes": 0,
       "stream": "none"
     },
     {
@@ -507,7 +624,52 @@
       "methods": [
         "GET"
       ],
+      "pathTemplate": "/api/shell",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/shell/{id}",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/shell/{id}/output",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
       "pathTemplate": "/api/skill",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/vcs/diff",
+      "category": "read",
+      "maxBodyBytes": 0,
+      "stream": "none"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "pathTemplate": "/api/vcs/status",
       "category": "read",
       "maxBodyBytes": 0,
       "stream": "none"

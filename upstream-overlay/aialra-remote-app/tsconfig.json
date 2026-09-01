@@ -8,7 +8,8 @@
     "strict": true,
     "paths": {
       "@opencode-ai/app": ["./src/opencode-app-shim.d.ts"],
-      "@opencode-ai/app/index.css": ["./src/style-shim.d.ts"]
+      "@opencode-ai/app/index.css": ["./src/style-shim.d.ts"],
+      "@opencode-ai/ui/*": ["./src/opencode-ui-shim.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]

@@ -110,4 +110,106 @@ describe("WorkspaceBoundary", () => {
       boundary.assertSocket("/pty", `directory=${encodeURIComponent(outside)}`),
     ).rejects.toThrow("workspace boundary");
   });
+
+  it("filters project and session metadata without deleting history", async () => {
+    const { root, outside, boundary } = await fixture();
+    const projects = await boundary.sanitizeMetadataResponse(
+      "/project",
+      Buffer.from(
+        JSON.stringify({
+          projects: [
+            { worktree: root, name: "inside" },
+            { worktree: outside, name: "outside" },
+            { name: "unknown" },
+          ],
+        }),
+      ),
+    );
+    expect(projects?.status).toBeNull();
+    expect(projects?.filteredCount).toBe(2);
+    expect(JSON.parse(Buffer.from(projects!.body).toString("utf8"))).toEqual({
+      projects: [{ worktree: root, name: "inside" }],
+    });
+
+    const session = await boundary.sanitizeMetadataResponse(
+      "/session/ses_outside",
+      Buffer.from(JSON.stringify({ id: "ses_outside", directory: outside })),
+    );
+    expect(session?.status).toBe(404);
+    expect(JSON.parse(Buffer.from(session!.body).toString("utf8"))).toEqual({});
+  });
+
+  it("returns a safe 404 for direct metadata without a verifiable directory", async () => {
+    const { boundary } = await fixture();
+    const result = await boundary.sanitizeMetadataResponse(
+      "/api/session/ses_unknown",
+      Buffer.from(JSON.stringify({ id: "ses_unknown" })),
+    );
+    expect(result).toMatchObject({ status: 404, filteredCount: 1 });
+    expect(Buffer.from(result!.body).toString("utf8")).toBe("{}");
+  });
+
+  it("short-circuits stale metadata reads outside the workspace", async () => {
+    const { outside, boundary } = await fixture();
+    const result = await boundary.safeMetadataRead({
+      type: "relay.http.request",
+      requestId: "2fb2c977-d7ed-4f61-a1fb-90e82e78611f",
+      method: "GET",
+      path: "/session",
+      query: `directory=${encodeURIComponent(outside)}`,
+      headers: {},
+      bodyBase64: null,
+    });
+    expect(result).toMatchObject({ status: 200, filteredCount: 1 });
+    expect(Buffer.from(result!.body).toString("utf8")).toBe("[]");
+  });
+
+  it("returns client-compatible empty shapes for legacy bootstrap aliases", async () => {
+    const { root, boundary } = await fixture();
+    const model = await boundary.safeMetadataRead({
+      type: "relay.http.request",
+      requestId: "2fb2c977-d7ed-4f61-a1fb-90e82e78611f",
+      method: "GET",
+      path: "/api/model/default",
+      query: `location[directory]=${encodeURIComponent(root)}`,
+      headers: {},
+      bodyBase64: null,
+    });
+    expect(JSON.parse(Buffer.from(model!.body).toString("utf8"))).toMatchObject(
+      {
+        data: null,
+      },
+    );
+
+    const mcp = await boundary.safeMetadataRead({
+      type: "relay.http.request",
+      requestId: "2fb2c977-d7ed-4f61-a1fb-90e82e78611f",
+      method: "GET",
+      path: "/api/mcp",
+      query: "",
+      headers: {},
+      bodyBase64: null,
+    });
+    expect(JSON.parse(Buffer.from(mcp!.body).toString("utf8"))).toMatchObject({
+      data: [],
+    });
+  });
+
+  it("keeps the v2 session list response shape when an old directory is requested", async () => {
+    const { outside, boundary } = await fixture();
+    const result = await boundary.safeMetadataRead({
+      type: "relay.http.request",
+      requestId: "2fb2c977-d7ed-4f61-a1fb-90e82e78611f",
+      method: "GET",
+      path: "/api/session",
+      query: `directory=${encodeURIComponent(outside)}`,
+      headers: {},
+      bodyBase64: null,
+    });
+    expect(result?.status).toBeNull();
+    expect(JSON.parse(Buffer.from(result!.body).toString("utf8"))).toEqual({
+      data: [],
+      cursor: {},
+    });
+  });
 });
