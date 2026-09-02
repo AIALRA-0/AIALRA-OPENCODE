@@ -38,8 +38,7 @@ import { RequestStatusSurface } from "./request-status";
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
 const HOST_ROUTE_KEY = "aialra-opencode.host-route";
 const SETTINGS_KEY = "settings.v3";
-const CLASSIC_LAYOUT_DEFAULT_APPLIED =
-  "aialra-classic-layout-default-applied-v1";
+const CLASSIC_LAYOUT_ENFORCED = "aialra-classic-layout-enforced-v1";
 
 function isAvailable(host: HostDescriptor): boolean {
   return host.state === "online" || host.state === "degraded";
@@ -120,7 +119,7 @@ function withinWorkspace(root: string, candidate: string): boolean {
   return right === left || right.startsWith(`${left}/`);
 }
 
-function ensureClassicLayoutDefault(): void {
+function enforceClassicLayout(): void {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw === null) {
@@ -128,7 +127,7 @@ function ensureClassicLayoutDefault(): void {
         SETTINGS_KEY,
         JSON.stringify({ general: { newLayoutDesigns: false } }),
       );
-      localStorage.setItem(CLASSIC_LAYOUT_DEFAULT_APPLIED, "1");
+      localStorage.setItem(CLASSIC_LAYOUT_ENFORCED, "1");
       return;
     }
     const value = JSON.parse(raw) as {
@@ -136,10 +135,9 @@ function ensureClassicLayoutDefault(): void {
     };
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     if (!value.general || typeof value.general !== "object") value.general = {};
-    if (typeof value.general.newLayoutDesigns === "boolean") return;
     value.general.newLayoutDesigns = false;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(value));
-    localStorage.setItem(CLASSIC_LAYOUT_DEFAULT_APPLIED, "1");
+    localStorage.setItem(CLASSIC_LAYOUT_ENFORCED, "1");
   } catch {
     // Storage is optional in private browsing and should never block startup
   }
@@ -541,10 +539,10 @@ async function start(): Promise<void> {
   const root = document.getElementById("root");
   if (!(root instanceof HTMLElement))
     throw new Error("application root is missing");
-  // The classic shell is the wrapper default only when the user has not
-  // already saved an explicit layout choice. This runs before AppInterface so
-  // the first paint does not briefly mount the new shell and then remount it.
-  ensureClassicLayoutDefault();
+  // This product deliberately keeps the official classic project/session
+  // sidebar. Apply the wrapper policy before AppInterface mounts so an older
+  // browser preference cannot flash or remount the management-heavy shell.
+  enforceClassicLayout();
   render(
     () => (
       <PlatformProvider

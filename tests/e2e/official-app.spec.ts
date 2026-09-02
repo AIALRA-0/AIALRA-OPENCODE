@@ -274,6 +274,7 @@ test("runs the zero-patch official App and recovers after a control-plane restar
 });
 
 test("keeps VPS and remote workspaces isolated", async ({ page }) => {
+  test.setTimeout(180_000);
   const binary = process.env.AIALRA_OPENCODE_E2E_BINARY;
   if (!binary) test.skip(true, "AIALRA_OPENCODE_E2E_BINARY is required");
 
@@ -312,20 +313,49 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
       waitForLine(remoteAgent, '"browserReady":true'),
     ]);
 
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "settings.v3",
+        JSON.stringify({ general: { newLayoutDesigns: true } }),
+      );
+    });
     await page.goto(origin);
     const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
     await expect(workspaceNav).toBeVisible();
-    const vpsButton = workspaceNav.getByRole("button", { name: /VPS 工作区/u });
-    const remoteButton = workspaceNav.getByRole("button", {
-      name: /远程工作区/u,
-    });
-    await expect(vpsButton).toBeVisible();
-    await expect(remoteButton).toBeVisible();
-    await expect(vpsButton).toHaveAttribute("aria-pressed", "true");
-    await expect(remoteButton).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      page.locator("[data-aialra-classic-layout-preference]"),
+    ).toHaveAttribute("data-new-layout", "false");
+    const switcher = workspaceNav.locator("[data-aialra-workspace-switcher]");
+    const openSwitcher = () => switcher.getByRole("button").first().click();
+    const chooseWorkspace = async (name: "AIALRA VPS" | "AIALRA Windows") => {
+      await openSwitcher();
+      const menu = workspaceNav.locator("[data-aialra-workspace-menu]");
+      await expect(menu).toBeVisible();
+      const target = menu.getByRole("option", { name: new RegExp(name, "u") });
+      const started = await page.evaluate(() => performance.now());
+      await target.evaluate((element) =>
+        (element as HTMLButtonElement).click(),
+      );
+      await expect(switcher).toContainText(name);
+      const finished = await page.evaluate(() => performance.now());
+      return finished - started;
+    };
+    await expect(switcher).toContainText("AIALRA VPS");
+    await expect(switcher).toContainText("VPS 工作区");
 
     await expect(workspaceNav).toContainText("AIALRA VPS");
-    await expect(workspaceNav).toContainText("工作目录");
+    await expect(
+      workspaceNav.locator("[data-aialra-workspace-root]"),
+    ).toBeVisible();
+
+    await openSwitcher();
+    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
+    const management = page.locator("[data-aialra-workspace-management]");
+    await expect(management).toBeVisible();
+    await expect(management).toContainText("AIALRA VPS");
+    await expect(management).toContainText("AIALRA Windows");
+    await management.getByRole("button", { name: "关闭工作区管理" }).click();
+    await expect(management).toBeHidden();
 
     const roots = await page.evaluate(async () => {
       const response = await fetch("/api/v1/hosts");
@@ -367,9 +397,7 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     expect(roots.remote).toContain("AIALRA-OPENCODE-remote-");
     expect(roots.vps).not.toBe(roots.remote);
 
-    await remoteButton.click();
-    await expect(remoteButton).toHaveAttribute("aria-pressed", "true");
-    await expect(vpsButton).toHaveAttribute("aria-pressed", "false");
+    await chooseWorkspace("AIALRA Windows");
     await expect(workspaceNav).toContainText("AIALRA Windows");
     await expect(
       workspaceNav.getByRole("button", { name: /新建会话/u }),
@@ -385,16 +413,36 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
 
     const switchDurations: number[] = [];
     for (let index = 0; index < 20; index += 1) {
-      const target = index % 2 === 0 ? vpsButton : remoteButton;
-      const start = await page.evaluate(() => performance.now());
-      await target.click();
-      await expect(target).toHaveAttribute("aria-pressed", "true");
-      const end = await page.evaluate(() => performance.now());
-      switchDurations.push(end - start);
+      const target = index % 2 === 0 ? "AIALRA VPS" : "AIALRA Windows";
+      switchDurations.push(await chooseWorkspace(target));
     }
     switchDurations.sort((left, right) => left - right);
     const p95 = switchDurations[Math.ceil(switchDurations.length * 0.95) - 1]!;
     expect(p95).toBeLessThan(500);
+
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 768 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      if (viewport.width < 1280) {
+        const toggle = page.getByRole("button", {
+          name: /Toggle (?:sidebar|menu)|侧边栏/u,
+        });
+        if (!(await workspaceNav.isVisible())) await toggle.click();
+      }
+      await expect(workspaceNav).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              document.documentElement.scrollWidth <=
+              document.documentElement.clientWidth,
+          ),
+        )
+        .toBe(true);
+    }
   } finally {
     await stop(vpsAgent);
     await stop(remoteAgent);

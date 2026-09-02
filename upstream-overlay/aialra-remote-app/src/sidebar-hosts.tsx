@@ -25,9 +25,6 @@ import {
 } from "./api";
 import { virtualOrigin } from "./remote-fetch";
 
-const CLASSIC_LAYOUT_MARKER = "aialra-classic-layout-default-v1";
-const CLASSIC_LAYOUT_DEFAULT_APPLIED =
-  "aialra-classic-layout-default-applied-v1";
 const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
 const SIDEBAR_PREPARE_SWITCH_EVENT = "aialra-prepare-sidebar-switch";
 const SIDEBAR_SWITCH_SETTLED_EVENT = "aialra-sidebar-switch-settled";
@@ -36,33 +33,33 @@ export function ClassicLayoutPreference() {
   const settings = useSettings();
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (
-      window.localStorage.getItem(CLASSIC_LAYOUT_MARKER) === "1" ||
-      window.localStorage.getItem(CLASSIC_LAYOUT_DEFAULT_APPLIED) !== "1"
-    )
-      return;
-
-    // The default is applied before AppInterface mounts, but the upstream
-    // settings store intentionally uses a temporary new-layout fallback while
-    // its async storage is loading. Flip that fallback once, then let the
-    // official setting own all later explicit choices.
-    window.localStorage.setItem(CLASSIC_LAYOUT_MARKER, "1");
-    if (settings.general.newLayoutDesigns())
-      settings.general.setNewLayoutDesigns(false);
+    if (!settings.ready() || !settings.general.newLayoutDesigns()) return;
+    settings.general.setNewLayoutDesigns(false);
   });
   return (
-    <span
-      data-aialra-classic-layout-preference
-      data-new-layout={String(settings.general.newLayoutDesigns())}
-      data-settings-ready={String(settings.ready())}
-      hidden
-    />
+    <>
+      <style>{`
+        div:has(> div > [data-action="settings-new-layout-designs"]),
+        [data-component="settings-v2-row"]:has([data-action="settings-new-layout-designs"]) {
+          display: none !important;
+        }
+      `}</style>
+      <span
+        data-aialra-classic-layout-preference
+        data-new-layout={String(settings.general.newLayoutDesigns())}
+        data-settings-ready={String(settings.ready())}
+        hidden
+      />
+    </>
   );
 }
 
 function sidebarPanel(): HTMLElement | null {
+  const mobile = window.matchMedia("(max-width: 1279px)").matches;
   const nav = document.querySelector<HTMLElement>(
-    'nav[data-component="sidebar-nav-desktop"]',
+    mobile
+      ? 'nav[data-component="sidebar-nav-mobile"]'
+      : 'nav[data-component="sidebar-nav-desktop"]',
   );
   const rail = nav?.querySelector<HTMLElement>(
     '[data-component="sidebar-rail"]',
@@ -76,6 +73,8 @@ function SidebarMount(props: { children: JSX.Element }) {
   const [mount, setMount] = createSignal<HTMLElement | null>(null);
   onMount(() => {
     const fallback = document.createElement("div");
+    const slot = document.createElement("div");
+    slot.dataset.aialraSidebarSlot = "true";
     fallback.dataset.aialraSidebarFallback = "true";
     fallback.style.cssText =
       "display:none;position:fixed;inset-block:2.5rem 0;inset-inline-start:4rem;width:280px;z-index:50;overflow:auto;background:var(--background-base);";
@@ -86,7 +85,9 @@ function SidebarMount(props: { children: JSX.Element }) {
     let prepared = false;
     let reconcileTimer: number | undefined;
     const setTarget = (target: HTMLElement) => {
-      if (target !== mount()) setMount(target);
+      if (slot.parentElement !== target || target.firstElementChild !== slot)
+        target.prepend(slot);
+      if (slot !== mount()) setMount(slot);
       fallback.style.display =
         target === fallback && window.matchMedia("(min-width: 1280px)").matches
           ? "block"
@@ -121,16 +122,26 @@ function SidebarMount(props: { children: JSX.Element }) {
     };
     const settle = () => {
       if (reconcileTimer !== undefined) window.clearTimeout(reconcileTimer);
-      reconcileTimer = window.setTimeout(() => {
+      const deadline = performance.now() + 500;
+      const reconcile = () => {
         reconcileTimer = undefined;
         const panel = sidebarPanel();
         const hidden =
           panel?.hasAttribute("inert") ||
           panel?.getAttribute("aria-hidden") === "true";
-        if (!panel || hidden) return;
+        if (!panel || hidden) {
+          if (performance.now() < deadline) {
+            reconcileTimer = window.setTimeout(reconcile, 16);
+            return;
+          }
+          prepared = false;
+          update();
+          return;
+        }
         prepared = false;
         setTarget(panel);
-      }, 240);
+      };
+      reconcileTimer = window.setTimeout(reconcile, 0);
     };
     update();
     window.addEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
@@ -148,12 +159,15 @@ function SidebarMount(props: { children: JSX.Element }) {
       childList: true,
       subtree: true,
     });
+    window.addEventListener("resize", scheduleUpdate);
     onCleanup(() => {
       observer.disconnect();
       if (updateFrame !== undefined) window.cancelAnimationFrame(updateFrame);
       if (reconcileTimer !== undefined) window.clearTimeout(reconcileTimer);
+      window.removeEventListener("resize", scheduleUpdate);
       window.removeEventListener(SIDEBAR_PREPARE_SWITCH_EVENT, prepare);
       window.removeEventListener(SIDEBAR_SWITCH_SETTLED_EVENT, settle);
+      slot.remove();
       fallback.remove();
     });
   });
@@ -213,20 +227,51 @@ export function HostSidebar(props: {
   const server = useServer();
   const tabs = useTabs();
   const [managementOpen, setManagementOpen] = createSignal(false);
+  const [selectorOpen, setSelectorOpen] = createSignal(false);
   const [busyAction, setBusyAction] = createSignal<string | null>(null);
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [switching, setSwitching] = createSignal<string | null>(null);
   let switchSequence = 0;
+  let selectorRoot: HTMLDivElement | undefined;
+  let managementClose: HTMLButtonElement | undefined;
+
+  onMount(() => {
+    const dismissSelector = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || selectorRoot?.contains(target)) return;
+      setSelectorOpen(false);
+    };
+    const dismissWithEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (managementOpen()) setManagementOpen(false);
+      else setSelectorOpen(false);
+    };
+    document.addEventListener("pointerdown", dismissSelector);
+    document.addEventListener("keydown", dismissWithEscape);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismissSelector);
+      document.removeEventListener("keydown", dismissWithEscape);
+    });
+  });
+
+  createEffect(() => {
+    if (!managementOpen()) return;
+    queueMicrotask(() => managementClose?.focus());
+  });
 
   const selectedHost = () =>
     props.hosts.find((host) => host.hostId === props.selectedHostId());
 
   const selectHost = (host: HostDescriptor) => {
     if (host.state !== "online" && host.state !== "degraded") return;
-    if (host.hostId === props.selectedHostId()) return;
+    if (host.hostId === props.selectedHostId()) {
+      setSelectorOpen(false);
+      return;
+    }
     const sequence = ++switchSequence;
     setSwitching(host.hostId);
+    setSelectorOpen(false);
     window.dispatchEvent(new Event(SIDEBAR_PREPARE_SWITCH_EVENT));
     props.onSelect(host);
     queueMicrotask(() => {
@@ -297,107 +342,226 @@ export function HostSidebar(props: {
     <SidebarMount>
       <section
         data-aialra-sidebar-hosts
+        data-active-host={selectedHost()?.hostId}
         aria-label="AIALRA 工作区"
         class="order-first w-full shrink-0 border-b border-border-weaker-base bg-background-base"
       >
-        <div class="px-3 pt-3 pb-2 text-12-medium text-text-weak">工作区</div>
-        <div class="flex flex-col gap-1 px-2 pb-2">
-          <For each={props.hosts}>
-            {(host) => {
-              const selected = () => host.hostId === props.selectedHostId();
-              const active = () =>
-                host.state === "online" || host.state === "degraded";
-              const root = () => props.workspaceRoots()[host.hostId];
-              return (
-                <div class="flex flex-col gap-1">
-                  <Button
-                    type="button"
-                    variant={selected() ? "secondary" : "ghost"}
-                    class="w-full min-w-0 justify-start gap-2 text-left"
-                    aria-pressed={selected()}
-                    aria-busy={switching() === host.hostId}
-                    disabled={!active() || switching() === host.hostId}
-                    onClick={() => selectHost(host)}
-                  >
-                    <span
-                      aria-hidden="true"
-                      class={`size-1.5 shrink-0 rounded-full ${active() ? "bg-icon-success-base" : "bg-icon-critical-base"}`}
-                    />
-                    <span class="min-w-0 flex-1 truncate">
-                      <span class="block truncate text-14-medium text-text-strong">
-                        {host.displayName}
+        <div class="flex flex-col gap-2 px-2 py-3">
+          <Show when={selectedHost()}>
+            {(host) => (
+              <Button
+                type="button"
+                size="normal"
+                variant="secondary"
+                class="w-full justify-start"
+                disabled={
+                  busyAction() !== null ||
+                  !props.workspaceRoots()[host().hostId] ||
+                  switching() !== null
+                }
+                aria-busy={busyAction() === `new-${host().hostId}`}
+                onClick={() => void openSession(host())}
+              >
+                <Icon name="edit" size="small" />
+                新建会话
+              </Button>
+            )}
+          </Show>
+
+          <div
+            ref={(element) => {
+              selectorRoot = element;
+            }}
+            data-aialra-workspace-switcher
+            class="relative"
+          >
+            <Show when={selectedHost()}>
+              {(host) => {
+                const active = () =>
+                  host().state === "online" || host().state === "degraded";
+                const root = () => props.workspaceRoots()[host().hostId];
+                return (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      class="w-full min-w-0 justify-start gap-2 text-left"
+                      aria-haspopup="listbox"
+                      aria-expanded={selectorOpen()}
+                      onClick={() => setSelectorOpen((value) => !value)}
+                    >
+                      <span
+                        aria-hidden="true"
+                        class={`size-1.5 shrink-0 rounded-full ${active() ? "bg-icon-success-base" : "bg-icon-critical-base"}`}
+                      />
+                      <span class="min-w-0 flex-1 truncate">
+                        <span class="block truncate text-14-medium text-text-strong">
+                          {host().displayName}
+                        </span>
+                        <span class="block truncate text-12-regular text-text-weak">
+                          {hostWorkspaceLabel(host())} ·{" "}
+                          {hostStateLabel(host())}
+                        </span>
                       </span>
-                      <span class="block truncate text-12-regular text-text-weak">
-                        {hostWorkspaceLabel(host)} · {hostStateLabel(host)}
-                      </span>
-                    </span>
-                    <Icon
-                      name="chevron-down"
-                      size="small"
-                      class="shrink-0 opacity-60"
-                    />
-                  </Button>
-                  <Show when={selected()}>
-                    <div class="mx-2 mb-1 rounded-md bg-surface-base px-2 py-2 text-11-regular text-text-weak">
-                      <div class="mb-1 text-12-medium text-text-base">
-                        工作目录
-                      </div>
-                      <div
-                        data-aialra-workspace-root
-                        class="select-text break-all font-mono text-11-regular text-text-strong"
-                      >
-                        {root() ?? "正在读取工作目录"}
-                      </div>
-                      <div class="mt-1 break-words">
-                        Agent {host.agentVersion} · OpenCode{" "}
-                        {host.opencodeVersion ?? "未知"}
-                      </div>
+                      <Icon
+                        name={selectorOpen() ? "chevron-up" : "chevron-down"}
+                        size="small"
+                        class="shrink-0 opacity-60"
+                      />
+                    </Button>
+                    <div
+                      data-aialra-workspace-root
+                      class="mt-1 truncate px-2 font-mono text-11-regular text-text-weak"
+                      title={root() ?? "正在读取工作目录"}
+                    >
+                      {root() ?? "正在读取工作目录"}
+                    </div>
+                  </>
+                );
+              }}
+            </Show>
+
+            <Show when={selectorOpen()}>
+              <div
+                data-aialra-workspace-menu
+                role="listbox"
+                aria-label="选择工作区"
+                class="absolute inset-x-0 top-full z-50 mt-1 rounded-md border border-border-weak-base bg-background-base p-1 shadow-lg"
+              >
+                <For each={props.hosts}>
+                  {(host) => {
+                    const selected = () =>
+                      host.hostId === props.selectedHostId();
+                    const active = () =>
+                      host.state === "online" || host.state === "degraded";
+                    return (
                       <Button
                         type="button"
-                        size="small"
-                        variant="ghost"
-                        class="mt-2 w-full justify-start"
-                        disabled={
-                          busyAction() !== null ||
-                          !root() ||
-                          switching() !== null
-                        }
-                        aria-busy={busyAction() === `new-${host.hostId}`}
-                        onClick={() => void openSession(host)}
+                        role="option"
+                        variant={selected() ? "secondary" : "ghost"}
+                        class="w-full min-w-0 justify-start gap-2 text-left"
+                        aria-selected={selected()}
+                        aria-busy={switching() === host.hostId}
+                        disabled={!active() || switching() === host.hostId}
+                        onClick={() => selectHost(host)}
                       >
-                        <Icon name="edit" size="small" />
-                        新建会话
+                        <span
+                          aria-hidden="true"
+                          class={`size-1.5 shrink-0 rounded-full ${active() ? "bg-icon-success-base" : "bg-icon-critical-base"}`}
+                        />
+                        <span class="min-w-0 flex-1 truncate">
+                          <span class="block truncate text-13-medium text-text-strong">
+                            {host.displayName}
+                          </span>
+                          <span class="block truncate text-11-regular text-text-weak">
+                            {hostWorkspaceLabel(host)} · {hostStateLabel(host)}
+                          </span>
+                        </span>
+                        <Show when={selected()}>
+                          <Icon name="check" size="small" />
+                        </Show>
                       </Button>
-                    </div>
-                  </Show>
-                </div>
-              );
-            }}
-          </For>
+                    );
+                  }}
+                </For>
+                <div class="my-1 border-t border-border-weaker-base" />
+                <Button
+                  type="button"
+                  size="small"
+                  variant="ghost"
+                  class="w-full justify-start"
+                  onClick={() => {
+                    setSelectorOpen(false);
+                    setManagementOpen(true);
+                  }}
+                >
+                  <Icon name="server" size="small" />
+                  管理工作区
+                </Button>
+              </div>
+            </Show>
+          </div>
         </div>
+      </section>
 
-        <div class="flex flex-col gap-1 px-2 pb-3">
-          <Button
-            type="button"
-            size="small"
-            variant="ghost"
-            class="w-full justify-start"
-            aria-expanded={managementOpen()}
-            aria-controls="aialra-host-management"
-            onClick={() => setManagementOpen((value) => !value)}
+      <Show when={managementOpen()}>
+        <Portal>
+          <div
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget)
+                setManagementOpen(false);
+            }}
           >
-            <Icon name="server" size="small" />
-            主机管理
-          </Button>
-          <Show when={managementOpen()}>
             <section
-              id="aialra-host-management"
-              role="region"
-              aria-label="主机管理"
-              class="mt-1 rounded-md bg-surface-base p-2"
+              data-aialra-workspace-management
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="aialra-workspace-management-title"
+              class="max-h-[min(720px,calc(100vh-2rem))] w-full max-w-lg overflow-y-auto rounded-xl border border-border-weak-base bg-background-base p-4 shadow-xl"
             >
-              <div class="mb-2 flex items-center justify-between gap-2">
-                <span class="text-12-medium text-text-strong">登记与状态</span>
+              <div class="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2
+                    id="aialra-workspace-management-title"
+                    class="text-16-medium text-text-strong"
+                  >
+                    管理工作区
+                  </h2>
+                  <p class="mt-1 text-12-regular text-text-weak">
+                    查看主机状态、版本和工作区边界，或登记新的 Agent
+                  </p>
+                </div>
+                <Button
+                  ref={(element) => {
+                    managementClose = element;
+                  }}
+                  type="button"
+                  size="small"
+                  variant="ghost"
+                  aria-label="关闭工作区管理"
+                  onClick={() => setManagementOpen(false)}
+                >
+                  <Icon name="close" size="small" />
+                </Button>
+              </div>
+
+              <div class="flex flex-col gap-2">
+                <For each={props.hosts}>
+                  {(host) => {
+                    const root = () => props.workspaceRoots()[host.hostId];
+                    return (
+                      <div class="rounded-lg border border-border-weaker-base bg-surface-base p-3">
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-14-medium text-text-strong">
+                              {host.displayName}
+                            </div>
+                            <div class="mt-0.5 text-12-regular text-text-weak">
+                              {host.platform} · {hostWorkspaceLabel(host)} ·{" "}
+                              {hostStateLabel(host)}
+                            </div>
+                          </div>
+                          <span class="shrink-0 text-11-medium text-text-weak">
+                            {host.capabilities.includes("workspace-boundary")
+                              ? "边界已隔离"
+                              : "边界待验证"}
+                          </span>
+                        </div>
+                        <div class="mt-3 select-text break-all font-mono text-11-regular text-text-strong">
+                          {root() ?? "正在读取工作目录"}
+                        </div>
+                        <div class="mt-2 text-11-regular text-text-weak">
+                          Agent {host.agentVersion} · OpenCode{" "}
+                          {host.opencodeVersion ?? "未知"}
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+
+              <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-border-weaker-base pt-4">
                 <Button
                   type="button"
                   size="small"
@@ -411,28 +575,8 @@ export function HostSidebar(props: {
                     window.setTimeout(() => setBusyAction(null), 180);
                   }}
                 >
-                  刷新
+                  刷新状态
                 </Button>
-              </div>
-              <For each={props.hosts}>
-                {(host) => (
-                  <div class="mb-2 last:mb-0 text-11-regular text-text-weak">
-                    <div class="text-12-medium text-text-base">
-                      {host.displayName}
-                    </div>
-                    <div>
-                      {host.platform} · {hostStateLabel(host)}
-                    </div>
-                    <div>
-                      工作区边界：
-                      {host.capabilities.includes("workspace-boundary")
-                        ? "已隔离"
-                        : "待验证"}
-                    </div>
-                  </div>
-                )}
-              </For>
-              <div class="mt-2 flex flex-wrap gap-1">
                 <Button
                   type="button"
                   size="small"
@@ -458,7 +602,7 @@ export function HostSidebar(props: {
                 {(value) => (
                   <div
                     aria-live="polite"
-                    class="mt-2 rounded-md border border-border-weaker-base p-2"
+                    class="mt-3 rounded-md border border-border-weaker-base p-3"
                   >
                     <div class="text-11-regular text-text-weak">
                       一次性登记码
@@ -481,9 +625,9 @@ export function HostSidebar(props: {
                 </p>
               </Show>
             </section>
-          </Show>
-        </div>
-      </section>
+          </div>
+        </Portal>
+      </Show>
     </SidebarMount>
   );
 }
