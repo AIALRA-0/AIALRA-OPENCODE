@@ -326,7 +326,6 @@ export function HostSidebar(props: {
       [currentHostId]: false,
       [host.hostId]: true,
     }));
-    window.dispatchEvent(new Event(SIDEBAR_PREPARE_SWITCH_EVENT));
     props.onSelect(host);
     void (async () => {
       try {
