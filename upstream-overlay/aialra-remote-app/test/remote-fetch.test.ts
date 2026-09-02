@@ -10,11 +10,17 @@ import { RemoteFetchError } from "../src/action-state";
 type Listener = (payload: Record<string, unknown> & { type: string }) => void;
 
 class FakeChannel {
+  readonly channelId = crypto.randomUUID();
   readonly sends: Record<string, unknown>[] = [];
   private readonly listeners = new Set<Listener>();
   respond = true;
   headersOnly = false;
   responseBody = '{"directory":"/workspace"}';
+
+  constructor(
+    readonly hostId = "host-test-fake",
+    readonly kind = "opencode-http",
+  ) {}
 
   listen(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -64,7 +70,7 @@ class FakeRelay {
     const key = `${hostId}:${kind}`;
     let channel = this.channels.get(key);
     if (!channel) {
-      channel = new FakeChannel();
+      channel = new FakeChannel(hostId, kind);
       this.channels.set(key, channel);
     }
     return Promise.resolve(channel);
@@ -175,7 +181,13 @@ test("does not resend a write after the relay disconnects", async () => {
     body: JSON.stringify({ text: "safe test" }),
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  channel.emit({ type: "relay.disconnected" });
+  channel.emit({
+    type: "relay.disconnected",
+    hostId,
+    channelId: channel.channelId,
+    channel: channel.kind,
+    reason: "unexpected",
+  });
 
   await expect(request).rejects.toBeInstanceOf(RemoteFetchError);
   await expect(request).rejects.toMatchObject({
@@ -188,6 +200,124 @@ test("does not resend a write after the relay disconnects", async () => {
     channel.sends.filter((item) => item.type === "relay.http.request"),
   ).toHaveLength(1);
   expect(remote.readMetrics()).toMatchObject({ unknownWrites: 0, failed: 1 });
+  remote.dispose();
+});
+
+test("isolates a relay disconnect to its host and channel", async () => {
+  const vpsHostId = "host-test-vps-1";
+  const windowsHostId = "host-test-win-1";
+  const relay = new FakeRelay();
+  const vps = new FakeChannel(vpsHostId);
+  const windows = new FakeChannel(windowsHostId);
+  vps.respond = false;
+  windows.respond = false;
+  relay.channels.set(`${vpsHostId}:opencode-http`, vps);
+  relay.channels.set(`${windowsHostId}:opencode-http`, windows);
+  const remote = createRemoteFetch(relay as never, [vpsHostId, windowsHostId], {
+    metadataTimeoutMs: 500,
+  });
+  const vpsRequest = remote(requestUrl(vpsHostId, "/path"));
+  const windowsRequest = remote(requestUrl(windowsHostId, "/path"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  windows.emit({
+    type: "relay.disconnected",
+    hostId: windowsHostId,
+    channelId: windows.channelId,
+    channel: windows.kind,
+    reason: "host_offline",
+  });
+  await expect(windowsRequest).rejects.toMatchObject({
+    category: "host_offline",
+  });
+  expect(
+    await Promise.race([
+      vpsRequest.then(
+        () => "settled",
+        () => "settled",
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 20)),
+    ]),
+  ).toBe("pending");
+
+  vps.emit({
+    type: "relay.disconnected",
+    hostId: vpsHostId,
+    channelId: vps.channelId,
+    channel: vps.kind,
+    reason: "host_offline",
+  });
+  await expect(vpsRequest).rejects.toMatchObject({
+    category: "host_offline",
+    retryable: false,
+  });
+  remote.dispose();
+});
+
+test("retries one safe metadata read after an unexpected channel disconnect", async () => {
+  const hostId = "host-test-read-retry";
+  const relay = new FakeRelay();
+  const channel = new FakeChannel(hostId);
+  channel.respond = false;
+  relay.channels.set(`${hostId}:opencode-http`, channel);
+  const remote = createRemoteFetch(relay as never, [hostId]);
+  const request = remote(requestUrl(hostId, "/path"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  channel.respond = true;
+  channel.emit({
+    type: "relay.disconnected",
+    hostId,
+    channelId: channel.channelId,
+    channel: channel.kind,
+    reason: "unexpected",
+    retryable: true,
+  });
+
+  const response = await request;
+  expect(await response.json()).toEqual({ directory: "/workspace" });
+  expect(
+    channel.sends.filter((item) => item.type === "relay.http.request"),
+  ).toHaveLength(2);
+  remote.dispose();
+});
+
+test("does not fail an in-flight read during planned channel replacement", async () => {
+  const hostId = "host-test-replacement";
+  const relay = new FakeRelay();
+  const channel = new FakeChannel(hostId);
+  channel.respond = false;
+  relay.channels.set(`${hostId}:opencode-http`, channel);
+  const remote = createRemoteFetch(relay as never, [hostId], {
+    metadataTimeoutMs: 500,
+  });
+  const request = remote(requestUrl(hostId, "/path"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const requestId = String(
+    channel.sends.find((item) => item.type === "relay.http.request")?.requestId,
+  );
+  channel.emit({
+    type: "relay.disconnected",
+    hostId,
+    channelId: channel.channelId,
+    channel: channel.kind,
+    reason: "replaced",
+  });
+  channel.emit({
+    type: "relay.http.response.start",
+    requestId,
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+  channel.emit({
+    type: "relay.http.chunk",
+    requestId,
+    sequence: 0,
+    bodyBase64: base64url(
+      new TextEncoder().encode('{"directory":"/workspace"}'),
+    ),
+  });
+  channel.emit({ type: "relay.http.end", requestId, errorCode: null });
+  await expect(request).resolves.toMatchObject({ status: 200 });
   remote.dispose();
 });
 

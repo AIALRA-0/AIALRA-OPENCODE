@@ -9,6 +9,21 @@ import { nextRelayRetryState, type RelayRetryState } from "./relay-retry";
 
 export type ChannelKind = "opencode-http" | "opencode-event" | "opencode-pty";
 export type RelayPayload = Record<string, unknown> & { type: string };
+export type RelayDisconnectReason =
+  | "unexpected"
+  | "host_offline"
+  | "replaced"
+  | "disposed";
+
+export interface RelayLifecycleEvent {
+  type: "relay.disconnected";
+  hostId: string;
+  channelId: string;
+  channel: ChannelKind;
+  reason: RelayDisconnectReason;
+  retryable: boolean;
+  code?: string;
+}
 
 interface EncryptedFrame {
   channelId: string;
@@ -38,6 +53,8 @@ interface ChannelState {
   resolveReady(): void;
   rejectReady(error: Error): void;
   listeners: Set<(payload: RelayPayload) => void>;
+  lifecycle: "open" | "retiring" | "closed";
+  users: number;
 }
 
 const NativeWebSocket = globalThis.WebSocket;
@@ -49,7 +66,20 @@ export class BrowserRelay {
   private readonly reusable = new Map<string, Promise<RelayChannel>>();
   private readonly identities = new Map<string, Promise<string>>();
   private readonly failures = new Map<string, RelayRetryState>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
   private disposed = false;
+
+  private readonly onOnline = () => {
+    if (this.disposed || this.channels.size === 0) return;
+    this.reconnectAttempt = 0;
+    this.scheduleReconnect(0);
+  };
+
+  constructor() {
+    if (typeof window !== "undefined")
+      window.addEventListener("online", this.onOnline);
+  }
 
   async channel(
     hostId: string,
@@ -84,6 +114,10 @@ export class BrowserRelay {
       }
       try {
         const resolved = await current;
+        if (resolved.isClosed()) {
+          if (this.reusable.get(key) === current) this.reusable.delete(key);
+          continue;
+        }
         if (!resolved.expiresSoon()) return resolved;
         if (this.reusable.get(key) !== current) continue;
         await this.waitForRetry(key);
@@ -91,6 +125,7 @@ export class BrowserRelay {
         const replacement = this.open(hostId, kind, scopes)
           .then((channel) => {
             this.failures.delete(key);
+            this.retire(resolved);
             return channel;
           })
           .catch((error) => {
@@ -106,7 +141,6 @@ export class BrowserRelay {
             throw error;
           });
         this.reusable.set(key, replacement);
-        resolved.close();
         return replacement;
       } catch (error) {
         if (this.reusable.get(key) === current) this.reusable.delete(key);
@@ -185,6 +219,8 @@ export class BrowserRelay {
       resolveReady,
       rejectReady,
       listeners: new Set(),
+      lifecycle: "open",
+      users: 0,
     };
     this.channels.set(channelId, state);
     this.send({
@@ -196,29 +232,33 @@ export class BrowserRelay {
       browserEphemeralKey: browserPublicKey,
       grant,
     });
-    await Promise.race([
-      ready,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("agent channel timed out")), 10_000),
-      ),
-    ]);
-    return new RelayChannel(this, state);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        ready,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("agent channel timed out")),
+            10_000,
+          );
+        }),
+      ]);
+      return new RelayChannel(this, state);
+    } catch (error) {
+      this.close(state, "unexpected");
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async transmit(state: ChannelState, payload: RelayPayload): Promise<void> {
+    if (this.isClosed(state)) throw new Error("relay channel is closed");
     await state.ready;
+    if (this.isClosed(state)) throw new Error("relay channel is closed");
     if (this.socket?.readyState !== NativeWebSocket.OPEN) {
-      this.reusable.delete(`${state.hostId}:${state.channel}`);
-      const replacement = await this.channel(
-        state.hostId,
-        state.channel,
-        state.scopes,
-      );
-      const listeners = new Set(state.listeners);
-      state.listeners.clear();
-      replacement.copyListeners(listeners);
-      this.close(state);
-      return replacement.send(payload);
+      await this.connect();
+      if (this.isClosed(state)) throw new Error("relay channel is closed");
     }
     if (!state.key) throw new Error("channel key is unavailable");
     const sequence = state.sendSequence++;
@@ -245,10 +285,21 @@ export class BrowserRelay {
     });
   }
 
-  close(state: ChannelState): void {
-    if (!this.channels.delete(state.channelId)) return;
-    for (const listener of state.listeners)
-      listener({ type: "relay.disconnected" });
+  close(state: ChannelState, reason: RelayDisconnectReason = "disposed"): void {
+    if (state.lifecycle === "closed") return;
+    state.lifecycle = "closed";
+    this.channels.delete(state.channelId);
+    state.rejectReady(new Error("relay channel closed"));
+    for (const listener of state.listeners) {
+      listener({
+        type: "relay.disconnected",
+        hostId: state.hostId,
+        channelId: state.channelId,
+        channel: state.channel,
+        reason,
+        retryable: reason === "unexpected" || reason === "host_offline",
+      });
+    }
     state.listeners.clear();
     if (this.socket?.readyState === NativeWebSocket.OPEN) {
       this.socket.send(
@@ -256,10 +307,35 @@ export class BrowserRelay {
           type: "browser.channel.close",
           hostId: state.hostId,
           channelId: state.channelId,
-          reason: "user",
+          reason:
+            reason === "replaced"
+              ? "expired"
+              : reason === "disposed"
+                ? "user"
+                : "disconnect",
         }),
       );
     }
+  }
+
+  private retire(channel: RelayChannel): void {
+    const state = channel.stateForRelay();
+    if (state.lifecycle === "closed") return;
+    state.lifecycle = "retiring";
+    if (state.users === 0) this.close(state, "replaced");
+  }
+
+  retain(state: ChannelState): () => void {
+    if (state.lifecycle === "closed") return () => {};
+    state.users += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      state.users = Math.max(0, state.users - 1);
+      if (state.lifecycle === "retiring" && state.users === 0)
+        this.close(state, "replaced");
+    };
   }
 
   dispose(): void {
@@ -270,14 +346,41 @@ export class BrowserRelay {
     this.reusable.clear();
     this.identities.clear();
     this.failures.clear();
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.reconnectAttempt = 0;
     this.socketReady = null;
     this.socket?.close(1000, "application disposed");
     this.socket = null;
+    if (typeof window !== "undefined")
+      window.removeEventListener("online", this.onOnline);
+  }
+
+  private scheduleReconnect(delay?: number): void {
+    if (this.disposed || this.reconnectTimer || this.socketReady) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const wait = delay ?? Math.min(500 * 2 ** this.reconnectAttempt, 15_000);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connect().then(
+        () => {
+          this.reconnectAttempt = 0;
+        },
+        () => {
+          this.reconnectAttempt += 1;
+          this.scheduleReconnect();
+        },
+      );
+    }, wait);
   }
 
   private async connect(): Promise<void> {
     if (this.socket?.readyState === NativeWebSocket.OPEN) return;
     if (this.socketReady) return this.socketReady;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     this.socketReady = new Promise<void>((resolve, reject) => {
       const socket = new NativeWebSocket(
@@ -299,6 +402,7 @@ export class BrowserRelay {
           const message = JSON.parse(raw) as Record<string, unknown>;
           if (message.type === "server.browser.ready") {
             clearTimeout(timer);
+            this.reconnectAttempt = 0;
             resolve();
             return;
           }
@@ -309,17 +413,33 @@ export class BrowserRelay {
       });
       socket.addEventListener("close", () => {
         clearTimeout(timer);
+        if (this.socket !== socket) return;
         this.socket = null;
         this.socketReady = null;
-        for (const state of this.channels.values()) {
+        const states = [...this.channels.values()];
+        const shouldReconnect = states.some(
+          (state) => state.users > 0 || state.listeners.size > 0,
+        );
+        for (const state of states) {
+          state.lifecycle = "closed";
           state.rejectReady(new Error("relay disconnected"));
           for (const listener of state.listeners)
-            listener({ type: "relay.disconnected" });
+            listener({
+              type: "relay.disconnected",
+              hostId: state.hostId,
+              channelId: state.channelId,
+              channel: state.channel,
+              reason: "unexpected",
+              retryable: true,
+            });
+          state.listeners.clear();
         }
         this.channels.clear();
         this.reusable.clear();
-        if (!this.disposed)
+        if (!this.disposed && shouldReconnect) {
+          this.scheduleReconnect();
           console.error("[AIALRA relay] control connection closed");
+        }
       });
     });
     return this.socketReady;
@@ -349,11 +469,11 @@ export class BrowserRelay {
         typeof message.channelId === "string" ? message.channelId : "";
       const state = opened ?? this.channels.get(channelId);
       if (state) {
-        this.channels.delete(state.channelId);
-        this.reusable.delete(`${state.hostId}:${state.channel}`);
-        state.rejectReady(new Error(`relay channel rejected: ${code}`));
-        for (const listener of state.listeners)
-          listener({ type: "relay.disconnected" });
+        this.disconnectState(
+          state,
+          code === "host_offline" ? "host_offline" : "unexpected",
+          code,
+        );
       } else if (code === "channel_missing") {
         // Browser WebSocket only accepts 1000 or 3000-4999 for application
         // initiated closes; 1012 is a server-only status and raises a page
@@ -369,11 +489,7 @@ export class BrowserRelay {
       const hostId = String(message.hostId ?? "");
       for (const state of [...this.channels.values()]) {
         if (state.hostId !== hostId) continue;
-        this.channels.delete(state.channelId);
-        this.reusable.delete(`${state.hostId}:${state.channel}`);
-        state.rejectReady(new Error("host disconnected"));
-        for (const listener of state.listeners)
-          listener({ type: "relay.disconnected" });
+        this.disconnectState(state, "host_offline", "host_offline");
       }
       return;
     }
@@ -443,6 +559,32 @@ export class BrowserRelay {
       this.close(state);
     }
   }
+
+  private isClosed(state: ChannelState): boolean {
+    return state.lifecycle === "closed";
+  }
+
+  private disconnectState(
+    state: ChannelState,
+    reason: RelayDisconnectReason,
+    code?: string,
+  ): void {
+    if (state.lifecycle === "closed") return;
+    state.lifecycle = "closed";
+    this.channels.delete(state.channelId);
+    state.rejectReady(new Error("relay channel closed"));
+    for (const listener of state.listeners)
+      listener({
+        type: "relay.disconnected",
+        hostId: state.hostId,
+        channelId: state.channelId,
+        channel: state.channel,
+        reason,
+        retryable: reason === "unexpected",
+        ...(code ? { code } : {}),
+      });
+    state.listeners.clear();
+  }
 }
 
 export class RelayChannel {
@@ -456,12 +598,29 @@ export class RelayChannel {
   }
 
   listen(listener: (payload: RelayPayload) => void): () => void {
+    if (this.state.lifecycle === "closed") return () => {};
     this.state.listeners.add(listener);
     return () => this.state.listeners.delete(listener);
   }
 
-  copyListeners(listeners: Set<(payload: RelayPayload) => void>): void {
-    for (const listener of listeners) this.state.listeners.add(listener);
+  retain(): () => void {
+    return this.relay.retain(this.state);
+  }
+
+  get channelId(): string {
+    return this.state.channelId;
+  }
+
+  get hostId(): string {
+    return this.state.hostId;
+  }
+
+  get kind(): ChannelKind {
+    return this.state.channel;
+  }
+
+  stateForRelay(): ChannelState {
+    return this.state;
   }
 
   expiresSoon(now = Date.now()): boolean {
@@ -470,5 +629,9 @@ export class RelayChannel {
 
   close(): void {
     this.relay.close(this.state);
+  }
+
+  isClosed(): boolean {
+    return this.state.lifecycle === "closed";
   }
 }

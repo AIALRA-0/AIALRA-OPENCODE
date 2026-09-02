@@ -70,6 +70,7 @@ interface RequestAttempt {
 interface PendingResponse {
   resolve(response: Response): void;
   reject(error: Error): void;
+  channelId: string;
   controller: ReadableStreamDefaultController<Uint8Array> | null;
   nextSequence: number;
   started: boolean;
@@ -125,6 +126,16 @@ function abortError(): DOMException {
 
 function metadataPath(path: string): boolean {
   return SAFE_METADATA_PATHS.has(path);
+}
+
+function safeMetadataRequest(request: Request): boolean {
+  const path = new URL(request.url).pathname;
+  return (
+    (request.method === "GET" || request.method === "HEAD") &&
+    metadataPath(path) &&
+    path !== "/event" &&
+    !path.endsWith("/event")
+  );
 }
 
 function categoryForRelayCode(code: string): RemoteErrorCategory {
@@ -320,20 +331,47 @@ export function createRemoteFetch(
     dispatchAttempt(item.attempt, "failed", error.category);
   };
 
+  const safeMetadataRequestForAttempt = (attempt: RequestAttempt): boolean =>
+    attempt.operation === "metadata" && !isWriteAttempt(attempt);
+
   const onPayload = (payload: RelayPayload) => {
     if (payload.type === "relay.disconnected") {
+      const channelId =
+        typeof payload.channelId === "string" ? payload.channelId : "";
+      const hostId = typeof payload.hostId === "string" ? payload.hostId : "";
+      if (!channelId || !hostId) return;
+      const reason =
+        payload.reason === "host_offline" ||
+        payload.reason === "replaced" ||
+        payload.reason === "disposed"
+          ? payload.reason
+          : "unexpected";
+      if (reason === "replaced") return;
       for (const [requestId, item] of pending) {
-        const category: RemoteErrorCategory = item.attempt.sent
-          ? isWriteAttempt(item.attempt)
-            ? "unknown_write_state"
-            : "host_offline"
-          : "channel_acquire_timeout";
-        const error = new RemoteFetchError("relay disconnected", {
+        if (item.channelId !== channelId || item.attempt.hostId !== hostId)
+          continue;
+        const code = typeof payload.code === "string" ? payload.code : "";
+        const category: RemoteErrorCategory =
+          reason === "host_offline"
+            ? "host_offline"
+            : reason === "disposed"
+              ? "cancelled"
+              : code
+                ? categoryForRelayCode(code)
+                : item.attempt.sent && isWriteAttempt(item.attempt)
+                  ? "unknown_write_state"
+                  : item.attempt.channelReady
+                    ? "upstream_timeout"
+                    : "channel_acquire_timeout";
+        const error = new RemoteFetchError("remote host channel unavailable", {
           category,
           requestId,
-          hostId: item.attempt.hostId,
+          hostId,
           sent: item.attempt.sent,
-          retryable: !item.attempt.sent && category !== "host_offline",
+          retryable:
+            safeMetadataRequestForAttempt(item.attempt) &&
+            category === "upstream_timeout" &&
+            payload.retryable === true,
         });
         rejectPending(item, error);
         pending.delete(requestId);
@@ -387,7 +425,9 @@ export function createRemoteFetch(
             requestId,
             hostId: item.attempt.hostId,
             sent: item.attempt.sent,
-            retryable: category === "host_offline",
+            retryable:
+              safeMetadataRequestForAttempt(item.attempt) &&
+              category === "upstream_timeout",
           },
         );
         console.error(`[AIALRA relay] request failed: ${errorCode}`);
@@ -404,7 +444,7 @@ export function createRemoteFetch(
             requestId,
             hostId: item.attempt.hostId,
             sent: item.attempt.sent,
-            retryable: !item.attempt.sent,
+            retryable: safeMetadataRequestForAttempt(item.attempt),
           },
         );
         rejectPending(item, error);
@@ -428,6 +468,16 @@ export function createRemoteFetch(
     attempt.channelReady = true;
     dispatchAttempt(attempt, "channel_ready");
     if (signal.aborted) throw abortError();
+    const channelId =
+      typeof (channel as RelayChannel & { channelId?: unknown }).channelId ===
+      "string"
+        ? (channel as RelayChannel & { channelId: string }).channelId
+        : "";
+    const release =
+      typeof (channel as RelayChannel & { retain?: unknown }).retain ===
+      "function"
+        ? (channel as RelayChannel & { retain(): () => void }).retain()
+        : () => {};
     const requestId = attempt.requestId;
     const cancel = () => {
       const item = pending.get(requestId);
@@ -439,12 +489,20 @@ export function createRemoteFetch(
       void channel
         .send({ type: "relay.http.cancel", requestId })
         .catch(() => {});
+      item.cleanup();
     };
-    const cleanup = () => signal.removeEventListener("abort", cancel);
+    let released = false;
+    const cleanup = () => {
+      signal.removeEventListener("abort", cancel);
+      if (released) return;
+      released = true;
+      release();
+    };
     const response = new Promise<Response>((resolve, reject) => {
       pending.set(requestId, {
         resolve,
         reject,
+        channelId,
         controller: null,
         nextSequence: 0,
         started: false,
@@ -459,6 +517,10 @@ export function createRemoteFetch(
         request.method === "GET" || request.method === "HEAD"
           ? null
           : new Uint8Array(await request.clone().arrayBuffer());
+      // Treat the hand-off as potentially delivered before awaiting its
+      // result. A transport error after this point must never make a write
+      // look safe to replay.
+      attempt.sent = true;
       await channel.send({
         type: "relay.http.request",
         requestId,
@@ -468,7 +530,6 @@ export function createRemoteFetch(
         headers: filteredHeaders(request.headers),
         bodyBase64: body ? base64url(body) : null,
       });
-      attempt.sent = true;
       dispatchAttempt(attempt, "sent");
       return await response;
     } catch (error) {
@@ -490,7 +551,10 @@ export function createRemoteFetch(
           requestId,
           hostId,
           sent: attempt.sent,
-          retryable: !attempt.sent,
+          retryable:
+            safeMetadataRequest(request) &&
+            (category === "upstream_timeout" ||
+              category === "channel_acquire_timeout"),
           cause: error,
         },
       );
@@ -544,7 +608,8 @@ export function createRemoteFetch(
           requestId: attempt.requestId,
           hostId,
           sent: attempt.sent,
-          retryable: !attempt.sent && category !== "upstream_timeout",
+          retryable:
+            safeMetadataRequest(request) && category !== "unknown_write_state",
           cause: error,
         });
         dispatchAttempt(attempt, "failed", category);
@@ -555,6 +620,37 @@ export function createRemoteFetch(
     } finally {
       if (timer) clearTimeout(timer);
       signal.removeEventListener("abort", abort);
+    }
+  };
+
+  const requestWithRetry = async (
+    request: Request,
+    hostId: string,
+    signal: AbortSignal,
+  ): Promise<Response> => {
+    const retryableRead = safeMetadataRequest(request);
+    for (let attemptNumber = 0; ; attemptNumber += 1) {
+      const attempt: RequestAttempt = {
+        requestId: crypto.randomUUID(),
+        hostId,
+        method: request.method,
+        operation: operationFor(new URL(request.url).pathname, request.method),
+        channelReady: false,
+        sent: false,
+      };
+      try {
+        return await requestWithTimeout(request, hostId, signal, attempt);
+      } catch (error) {
+        if (
+          !retryableRead ||
+          attemptNumber > 0 ||
+          signal.aborted ||
+          !(error instanceof RemoteFetchError) ||
+          !error.retryable
+        )
+          throw error;
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      }
     }
   };
 
@@ -613,24 +709,15 @@ export function createRemoteFetch(
       throw new TypeError("request body exceeds the relay limit");
 
     metrics.requests += 1;
-    const attempt: RequestAttempt = {
-      requestId: crypto.randomUUID(),
-      hostId,
-      method: request.method,
-      operation: operationFor(url.pathname, request.method),
-      channelReady: false,
-      sent: false,
-    };
     const canShare =
       (request.method === "GET" || request.method === "HEAD") &&
       metadataPath(url.pathname);
     if (!canShare) {
       try {
-        const response = await requestWithTimeout(
+        const response = await requestWithRetry(
           request,
           hostId,
           request.signal,
-          attempt,
         );
         metrics.completed += 1;
         return response;
@@ -652,20 +739,15 @@ export function createRemoteFetch(
     let entry = shared.get(key);
     if (!entry) {
       const controller = new AbortController();
-      const promise = requestWithTimeout(
-        request,
-        hostId,
-        controller.signal,
-        attempt,
-      )
+      const promise = requestWithRetry(request, hostId, controller.signal)
         .then(async (response) => {
           const bodyTimeoutError = new RemoteFetchError(
             "remote response body timed out",
             {
               category: "upstream_timeout",
-              requestId: attempt.requestId,
+              requestId: undefined,
               hostId,
-              sent: attempt.sent,
+              sent: true,
               retryable: false,
             },
           );

@@ -42,6 +42,62 @@ const MAX_CHANNELS_PER_BROWSER = 8;
 const MAX_HANDSHAKES_PER_MINUTE = 600;
 const MAX_AGENT_MESSAGES_PER_TEN_SECONDS = 3_000;
 const MAX_BROWSER_MESSAGES_PER_TEN_SECONDS = 600;
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const MAX_MISSED_HEARTBEATS = 2;
+
+export function classifyRelayClose(code: number): string {
+  if (code === 1000) return "normal";
+  if (code === 1001) return "shutdown";
+  if (code === 1008) return "policy_violation";
+  if (code === 1009) return "frame_too_large";
+  if (code === 1013) return "transient_failure";
+  if (code === 4001) return "connection_replaced";
+  if (code === 4003) return "identity_revoked";
+  if (code === 4008) return "heartbeat_timeout";
+  return "protocol_failure";
+}
+
+function installHeartbeat(socket: WebSocket): () => void {
+  let alive = true;
+  let missed = 0;
+  let stopped = false;
+  const onPong = () => {
+    alive = true;
+  };
+  socket.on("pong", onPong);
+  const timer = setInterval(() => {
+    if (stopped || socket.readyState !== WebSocket.OPEN) return;
+    if (!alive) {
+      missed += 1;
+      if (missed >= MAX_MISSED_HEARTBEATS) {
+        socket.close(4008, "relay heartbeat timeout");
+        return;
+      }
+    } else {
+      missed = 0;
+    }
+    alive = false;
+    socket.ping();
+  }, HEARTBEAT_INTERVAL_MS);
+  timer.unref?.();
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    socket.off("pong", onPong);
+  };
+}
+
+function logRelayClose(
+  role: "agent" | "browser",
+  code: number,
+  connectedAt: number,
+  channelCount: number,
+): void {
+  console.info(
+    `[relay] role=${role} close_category=${classifyRelayClose(code)} code=${code} duration_ms=${Math.max(0, Date.now() - connectedAt)} channels=${channelCount}`,
+  );
+}
 
 export interface RateWindow {
   startedAt: number;
@@ -285,6 +341,8 @@ export class RelayService {
 
   private handleAgent(socket: WebSocket): void {
     let connection: AgentConnection | null = null;
+    const connectedAt = Date.now();
+    const stopHeartbeat = installHeartbeat(socket);
     const messageRate: RateWindow = { startedAt: Date.now(), count: 0 };
     const authTimer = setTimeout(
       () => socket.close(1008, "authentication timeout"),
@@ -367,11 +425,9 @@ export class RelayService {
       }
       this.handleAuthenticatedAgent(connection, envelope);
     });
-    socket.on("close", (code, reason) => {
-      if (this.config.nodeEnv !== "production")
-        process.stderr.write(
-          `[relay] agent socket closed: ${code} ${reason.toString("utf8").slice(0, 80)}\n`,
-        );
+    socket.on("close", (code) => {
+      stopHeartbeat();
+      logRelayClose("agent", code, connectedAt, connection ? 1 : 0);
       clearTimeout(authTimer);
       if (connection && this.agents.get(connection.hostId)?.socket === socket) {
         this.agents.delete(connection.hostId);
@@ -467,6 +523,8 @@ export class RelayService {
       channels: new Map(),
     };
     const messageRate: RateWindow = { startedAt: Date.now(), count: 0 };
+    const connectedAt = Date.now();
+    const stopHeartbeat = installHeartbeat(socket);
     this.browsers.add(connection);
     send(socket, { type: "server.browser.ready" });
     socket.on("message", (data, binary) => {
@@ -585,11 +643,9 @@ export class RelayService {
       }
       send(agent.socket, { ...envelope, subject: principal.subject });
     });
-    socket.on("close", (code, reason) => {
-      if (this.config.nodeEnv !== "production")
-        process.stderr.write(
-          `[relay] browser socket closed: ${code} ${reason.toString("utf8").slice(0, 80)}\n`,
-        );
+    socket.on("close", (code) => {
+      stopHeartbeat();
+      logRelayClose("browser", code, connectedAt, connection.channels.size);
       this.browsers.delete(connection);
       for (const [channelId, channel] of connection.channels) {
         const agent = this.agents.get(channel.hostId);
