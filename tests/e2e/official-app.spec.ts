@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 const repo = resolve(import.meta.dirname, "../..");
 const origin = "http://127.0.0.1:8787";
@@ -58,7 +58,7 @@ test("creates a one-time enrollment code on a first boot", async ({ page }) => {
     );
   } finally {
     await stop(control);
-    await rm(fixture, { recursive: true, force: true });
+    await removeTempTree(fixture);
   }
 });
 
@@ -101,6 +101,89 @@ async function stop(child: ChildProcess | null): Promise<void> {
     } else {
       child.kill("SIGKILL");
     }
+  }
+}
+
+async function removeTempTree(path: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+  }
+  throw lastError;
+}
+
+async function expectSingleSessionChrome(
+  page: Page,
+  options: { session?: boolean } = {},
+): Promise<void> {
+  const session = options.session ?? true;
+  const readCounts = () =>
+    page.evaluate(() => ({
+      titlebar: document.querySelectorAll("header").length,
+      center: document.querySelectorAll("#opencode-titlebar-center").length,
+      centerPortals: document.querySelectorAll("#opencode-titlebar-center > *")
+        .length,
+      search: document.querySelectorAll(
+        '#opencode-titlebar-center [aria-label="搜索文件"], #opencode-titlebar-center [aria-label="Search files"]',
+      ).length,
+      right: document.querySelectorAll("#opencode-titlebar-right").length,
+      status: document.querySelectorAll(
+        '#opencode-titlebar-right [aria-label="状态"], #opencode-titlebar-right [aria-label="Status"]',
+      ).length,
+      review: document.querySelectorAll(
+        '#opencode-titlebar-right [aria-label="切换审查"], #opencode-titlebar-right [aria-label="Toggle review"]',
+      ).length,
+      toast: document.querySelectorAll('[data-component="toast-region"]')
+        .length,
+      sidebarSlot: document.querySelectorAll("[data-aialra-sidebar-slot]")
+        .length,
+    }));
+  try {
+    await expect.poll(readCounts, { timeout: 10_000 }).toEqual({
+      titlebar: 1,
+      center: 1,
+      centerPortals: session ? 1 : 0,
+      search: session ? 1 : 0,
+      right: 1,
+      status: session ? 1 : 0,
+      review: session ? 1 : 0,
+      toast: 1,
+      sidebarSlot: 1,
+    });
+  } catch (error) {
+    const debug = await page.evaluate(() => ({
+      centerChildren: [
+        ...document.querySelectorAll("#opencode-titlebar-center > *"),
+      ].map((element) => ({
+        tag: element.tagName,
+        text: element.textContent?.replace(/\s+/gu, " ").trim().slice(0, 160),
+        parent: element.parentElement?.id,
+      })),
+      rightChildren: [
+        ...document.querySelectorAll("#opencode-titlebar-right > *"),
+      ].map((element) => ({
+        tag: element.tagName,
+        text: element.textContent?.replace(/\s+/gu, " ").trim().slice(0, 160),
+        parent: element.parentElement?.id,
+      })),
+      toastRegions: [
+        ...document.querySelectorAll('[data-component="toast-region"]'),
+      ].map((element) => ({
+        text: element.textContent?.replace(/\s+/gu, " ").trim().slice(0, 160),
+        parent: element.parentElement?.tagName,
+      })),
+      route: location.pathname + location.search + location.hash,
+    }));
+    throw new Error(
+      "session chrome cardinality failed: " + JSON.stringify(debug),
+      { cause: error },
+    );
   }
 }
 
@@ -147,6 +230,7 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     await page.goto(origin);
     const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
     await expect(workspaceNav).toBeVisible();
+    await expectSingleSessionChrome(page, { session: false });
     await expect(page.locator("#root")).toHaveAttribute(
       "data-aialra-app-state",
       "running",
@@ -177,9 +261,13 @@ test("runs the zero-patch official App and recovers after a control-plane restar
         .getByRole("button")
         .first(),
     ).toBeVisible();
-    const newSessionButton = workspaceNav.getByRole("button", {
-      name: /新建会话/u,
-    });
+    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
+    const management = page.locator("[data-aialra-workspace-management]");
+    await expect(management).toBeVisible();
+    const newSessionButton = management
+      .locator("[data-aialra-host-management]")
+      .first()
+      .locator('[data-aialra-action="new-session"]');
     await expect(newSessionButton).toBeVisible();
     await expect.poll(async () => newSessionButton.isEnabled()).toBe(true);
     await newSessionButton.click();
@@ -188,7 +276,9 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       .toMatch(/^\/[^/]+\/session$/u);
     await expect(
       workspaceNav.locator('[data-aialra-action="new-session"]'),
-    ).toHaveCount(1);
+    ).toHaveCount(0);
+    await expect(management).toBeHidden();
+    await expectSingleSessionChrome(page);
     await page.goto(origin);
     await expect(page.locator("body")).not.toContainText(".opencode.invalid");
     await page.getByRole("button", { name: /^(设置|Settings)$/u }).click();
@@ -309,11 +399,13 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       )
       .toBe(true);
 
+    await expectSingleSessionChrome(page);
+
     expect(agent.exitCode).toBeNull();
   } finally {
     await stop(agent);
     await stop(control);
-    await rm(fixture, { recursive: true, force: true });
+    await removeTempTree(fixture);
   }
 });
 
@@ -362,6 +454,18 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
         "settings.v3",
         JSON.stringify({ general: { newLayoutDesigns: true } }),
       );
+      const state = window as unknown as {
+        __aialraBrowserRelaySockets: number;
+      };
+      state.__aialraBrowserRelaySockets = 0;
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          if (String(args[0]).includes("/ws/v1/browser"))
+            state.__aialraBrowserRelaySockets += 1;
+          return Reflect.construct(target, args) as WebSocket;
+        },
+      });
     });
     await page.goto(origin);
     const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
@@ -369,6 +473,15 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     await expect(
       page.locator("[data-aialra-classic-layout-preference]"),
     ).toHaveAttribute("data-new-layout", "false");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __aialraBrowserRelaySockets: number })
+              .__aialraBrowserRelaySockets,
+        ),
+      )
+      .toBe(1);
     const chooseWorkspace = async (name: "AIALRA VPS" | "AIALRA Windows") => {
       const item = workspaceNav
         .locator("[data-aialra-host-item]")
@@ -388,13 +501,19 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     await expect(workspaceNav).toContainText("AIALRA VPS");
     await expect(
       workspaceNav.locator("[data-aialra-workspace-root]"),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(
+      workspaceNav.locator('[data-aialra-action="new-session"]'),
+    ).toHaveCount(0);
 
     await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
     const management = page.locator("[data-aialra-workspace-management]");
     await expect(management).toBeVisible();
     await expect(management).toContainText("AIALRA VPS");
     await expect(management).toContainText("AIALRA Windows");
+    await expect(
+      management.locator("[data-aialra-workspace-root]"),
+    ).toHaveCount(2);
     await management.getByRole("button", { name: "关闭工作区管理" }).click();
     await expect(management).toBeHidden();
 
@@ -460,9 +579,22 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
       .filter({ hasText: "AIALRA Windows" })
       .first();
     await expect(workspaceNav).toContainText("AIALRA Windows");
+    await expect(activeWindows.locator("button")).toHaveCount(1);
+    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
+    const windowsManagement = page
+      .locator("[data-aialra-host-management]")
+      .filter({ hasText: "AIALRA Windows" })
+      .first();
     await expect(
-      activeWindows.locator('[data-aialra-action="new-session"]'),
+      windowsManagement.locator('[data-aialra-action="new-session"]'),
     ).toBeEnabled();
+    await windowsManagement
+      .locator('[data-aialra-action="new-session"]')
+      .click();
+    await expect
+      .poll(() => new URL(page.url()).pathname)
+      .toMatch(/^\/[^/]+\/session$/u);
+    await expectSingleSessionChrome(page);
 
     await expect(workspaceNav).toBeVisible();
     await expect(page.locator("[data-aialra-sidebar-fallback]")).toHaveCount(0);
@@ -478,6 +610,16 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
       const target = index % 2 === 0 ? "AIALRA VPS" : "AIALRA Windows";
       switchDurations.push(await chooseWorkspace(target));
     }
+    await expectSingleSessionChrome(page);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __aialraBrowserRelaySockets: number })
+              .__aialraBrowserRelaySockets,
+        ),
+      )
+      .toBe(1);
     switchDurations.sort((left, right) => left - right);
     const p95 = switchDurations[Math.ceil(switchDurations.length * 0.95) - 1]!;
     expect(p95).toBeLessThan(500);
@@ -505,14 +647,17 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
         )
         .toBe(true);
     }
+    await expect(
+      page.locator('[data-component="toast-region"]'),
+    ).not.toContainText("Transport");
   } finally {
     await stop(vpsAgent);
     await stop(remoteAgent);
     await stop(control);
     await Promise.all([
-      rm(fixture, { recursive: true, force: true }),
-      rm(vpsWorkspace, { recursive: true, force: true }),
-      rm(remoteWorkspace, { recursive: true, force: true }),
+      removeTempTree(fixture),
+      removeTempTree(vpsWorkspace),
+      removeTempTree(remoteWorkspace),
     ]);
   }
 });

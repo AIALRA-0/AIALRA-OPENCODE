@@ -46,6 +46,27 @@ function statusText(state: ActionState, note: string | null): string {
   return "发送失败，未自动重发";
 }
 
+function statusCheckError(category: string | undefined): string {
+  switch (category) {
+    case "channel_acquire_timeout":
+      return "状态检查连接主机超时，请稍后重试";
+    case "upstream_timeout":
+      return "状态检查服务端响应超时，请稍后重试";
+    case "authentication_failure":
+      return "状态检查认证失败，请重新登录或检查主机授权";
+    case "host_offline":
+      return "状态检查失败：主机当前离线";
+    case "boundary_rejected":
+      return "状态检查被工作区边界拒绝";
+    case "cancelled":
+      return "状态检查已取消";
+    case "unknown_write_state":
+      return "提交状态未知，请先确认会话消息";
+    default:
+      return "状态检查失败，请稍后重试";
+  }
+}
+
 export function RequestStatusSurface(props: { remoteFetch: typeof fetch }) {
   const [mount, setMount] = createSignal<HTMLElement | null>(null);
   const [state, setState] = createSignal<ActionState>({
@@ -96,7 +117,7 @@ export function RequestStatusSurface(props: { remoteFetch: typeof fetch }) {
       }
     } catch (error) {
       const category = (error as RemoteFetchError).category;
-      setNote(category ? `状态检查失败：${category}` : "状态检查失败");
+      setNote(statusCheckError(category));
     } finally {
       setChecking(false);
     }

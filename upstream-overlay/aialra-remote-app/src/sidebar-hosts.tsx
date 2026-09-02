@@ -6,7 +6,9 @@ import {
 } from "@opencode-ai/app";
 import { Button } from "@opencode-ai/ui/button";
 import { Icon } from "@opencode-ai/ui/icon";
+import { useNavigate } from "@solidjs/router";
 import {
+  batch,
   For,
   Show,
   createEffect,
@@ -26,14 +28,15 @@ import { virtualOrigin } from "./remote-fetch";
 import {
   hostWorkspaceLabel,
   workspaceSessionRoute,
+  workspaceRootErrorMessage,
   type HostViewModel,
+  type WorkspaceRootResult,
   type WorkspaceStateByHost,
 } from "./workspace-state";
 
 const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
 const SIDEBAR_PREPARE_SWITCH_EVENT = "aialra-prepare-sidebar-switch";
 const SIDEBAR_SWITCH_SETTLED_EVENT = "aialra-sidebar-switch-settled";
-const SWITCH_TRANSITION_DEBOUNCE_MS = 64;
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
@@ -69,30 +72,6 @@ function sidebarPanel(): HTMLElement | null {
   return panel instanceof HTMLElement ? panel : null;
 }
 
-function hideOfficialTopLevelNewSession(panel: HTMLElement): void {
-  for (const button of panel.querySelectorAll<HTMLButtonElement>("button")) {
-    if (button.closest("[data-aialra-sidebar-hosts]")) continue;
-    const label = button.textContent?.replace(/\s+/gu, " ").trim();
-    if (label !== "新建会话" && label !== "New session") continue;
-
-    // The classic official panel places its project-level new-session action
-    // in a dedicated `shrink-0 py-4` row. Hide only that exact row; nested
-    // project/workspace actions remain owned by OpenCode.
-    const row = button.parentElement;
-    const content = row?.parentElement;
-    if (
-      !row ||
-      !content ||
-      !row.classList.contains("shrink-0") ||
-      !row.classList.contains("py-4") ||
-      !content.classList.contains("flex-1")
-    )
-      continue;
-    row.dataset.aialraOfficialNewSession = "hidden";
-    row.style.display = "none";
-  }
-}
-
 function SidebarMount(props: { children: JSX.Element }) {
   const [mount, setMount] = createSignal<HTMLElement | null>(null);
   onMount(() => {
@@ -117,12 +96,6 @@ function SidebarMount(props: { children: JSX.Element }) {
       }
       if (slot.parentElement !== target || target.firstElementChild !== slot)
         target.prepend(slot);
-      for (const duplicate of target.querySelectorAll<HTMLElement>(
-        ':scope > [data-aialra-sidebar-slot="true"]',
-      )) {
-        if (duplicate !== slot) duplicate.remove();
-      }
-      hideOfficialTopLevelNewSession(target);
       if (slot !== mount()) setMount(slot);
     };
 
@@ -233,6 +206,7 @@ function hostIsAvailable(host: HostDescriptor): boolean {
 
 function rootStatusLabel(status: HostViewModel["rootStatus"]): string {
   if (status === "loading") return "正在验证工作目录…";
+  if (status === "retrying") return "正在重试工作目录…";
   if (status === "failed") return "工作目录验证失败，点击重试";
   if (status === "ready") return "工作目录已验证";
   return "等待验证工作目录";
@@ -257,12 +231,16 @@ export function HostSidebar(props: {
   selectedHostId: Accessor<string>;
   workspaceRoots: Accessor<Record<string, string>>;
   workspaceStates: Accessor<WorkspaceStateByHost>;
-  ensureWorkspaceRoot(host: HostDescriptor): Promise<string | undefined>;
+  ensureWorkspaceRoot(
+    host: HostDescriptor,
+    options?: { force?: boolean },
+  ): Promise<WorkspaceRootResult>;
   onSelect(host: HostDescriptor): void;
-  onActivate(host: HostDescriptor): void;
+  onActivate(host: HostDescriptor): string;
   onRefresh(): void;
 }) {
   const server = useServer();
+  const navigate = useNavigate();
   const [managementOpen, setManagementOpen] = createSignal(false);
   const [busyAction, setBusyAction] = createSignal<string | null>(null);
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
@@ -274,21 +252,14 @@ export function HostSidebar(props: {
   const [renderedHostId, setRenderedHostId] = createSignal(
     props.selectedHostId(),
   );
-  const [expandedHosts, setExpandedHosts] = createSignal<
-    Record<string, boolean>
-  >({});
   let switchSequence = 0;
-  let switchTimer: number | undefined;
+  let disposed = false;
+  let transitionPromise: Promise<boolean> | null = null;
   let managementClose: HTMLButtonElement | undefined;
 
   createEffect(() => {
     const selected = props.selectedHostId();
     if (switching() === null) setRenderedHostId(selected);
-    setExpandedHosts((current) =>
-      current[selected] !== undefined
-        ? current
-        : { ...current, [selected]: true },
-    );
   });
 
   onMount(() => {
@@ -300,7 +271,8 @@ export function HostSidebar(props: {
   });
 
   onCleanup(() => {
-    if (switchTimer !== undefined) window.clearTimeout(switchTimer);
+    disposed = true;
+    switchSequence += 1;
   });
 
   createEffect(() => {
@@ -310,99 +282,134 @@ export function HostSidebar(props: {
 
   const modelFor = (host: HostDescriptor): HostViewModel => {
     const state = props.workspaceStates()[host.hostId];
+    const rootState = state?.rootState;
     return {
       ...host,
       workspaceLabel: hostWorkspaceLabel(host),
       workspaceRoot: props.workspaceRoots()[host.hostId] ?? state?.root,
       rootStatus: state?.rootStatus ?? "idle",
-      expanded:
-        host.hostId === renderedHostId() &&
-        (expandedHosts()[host.hostId] ?? state?.expanded ?? true),
+      rootErrorCategory: rootState?.errorCategory,
+      rootRetryable: rootState?.retryable,
+      expanded: false,
     };
   };
 
-  const selectHost = (host: HostDescriptor) => {
-    if (!hostIsAvailable(host)) return;
+  const switchHost = async (host: HostDescriptor): Promise<boolean> => {
+    if (!hostIsAvailable(host) || disposed) return false;
     if (host.hostId === renderedHostId()) {
-      setExpandedHosts((current) => ({ ...current, [host.hostId]: true }));
-      return;
+      if (transitionPromise) await transitionPromise;
+      return !disposed;
     }
     const sequence = ++switchSequence;
-    const currentHostId = renderedHostId();
     setSwitching(host.hostId);
-    // Reflect the target immediately in the native sidebar. The parent
-    // server scope still activates only after the workspace root is verified.
-    setRenderedHostId(host.hostId);
     setError(null);
     setSwitchErrors((current) => ({ ...current, [host.hostId]: undefined }));
-    setExpandedHosts((current) => ({
-      ...current,
-      [currentHostId]: false,
-      [host.hostId]: true,
-    }));
-    const rootPromise = props.ensureWorkspaceRoot(host);
-    void rootPromise.catch(() => undefined);
-    if (switchTimer !== undefined) window.clearTimeout(switchTimer);
-    switchTimer = window.setTimeout(() => {
-      switchTimer = undefined;
-      if (switchSequence !== sequence) return;
-      // Let the sidebar paint its immediate feedback before the official app
-      // performs the heavier server-scope transition. Repeated clicks within
-      // this window are coalesced to the latest host.
-      props.onSelect(host);
-      void rootPromise
-        .then((root) => {
-          if (!root) throw new Error("工作目录尚未确认");
-          if (switchSequence !== sequence) return;
-          props.onActivate(host);
-          server.setActive(
-            ServerConnection.Key.make(virtualOrigin(host.hostId)),
-          );
-        })
-        .catch((cause) => {
-          if (switchSequence === sequence) {
-            const message =
-              cause instanceof Error ? cause.message : "无法切换工作区";
-            setRenderedHostId(currentHostId);
-            setExpandedHosts((current) => ({
-              ...current,
-              [currentHostId]: true,
-              [host.hostId]: false,
-            }));
-            setSwitchErrors((current) => ({
-              ...current,
-              [host.hostId]: message,
-            }));
-          }
-        })
-        .finally(() => {
-          if (switchSequence === sequence) {
-            window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
-            setSwitching(null);
-          }
-        });
-    }, SWITCH_TRANSITION_DEBOUNCE_MS);
-  };
-
-  const toggleHost = (host: HostDescriptor) => {
-    if (!hostIsAvailable(host)) return;
-    if (host.hostId !== renderedHostId()) {
-      selectHost(host);
-      return;
+    let result: WorkspaceRootResult;
+    try {
+      result = await props.ensureWorkspaceRoot(host);
+    } catch {
+      if (disposed || switchSequence !== sequence) return false;
+      setSwitchErrors((current) => ({
+        ...current,
+        [host.hostId]: "无法验证工作区，请稍后重试",
+      }));
+      setSwitching(null);
+      return false;
     }
-    setExpandedHosts((current) => ({
-      ...current,
-      [host.hostId]: !modelFor(host).expanded,
-    }));
+    if (disposed || switchSequence !== sequence) return false;
+    if (!result.ok) {
+      setSwitchErrors((current) => ({
+        ...current,
+        [host.hostId]: workspaceRootErrorMessage(result.category),
+      }));
+      setSwitching(null);
+      return false;
+    }
+    const verified = props.workspaceStates()[host.hostId]?.rootState;
+    if (
+      !verified ||
+      verified.phase !== "ready" ||
+      verified.root !== result.directory ||
+      verified.verifiedAt !== result.verifiedAt
+    ) {
+      setSwitchErrors((current) => ({
+        ...current,
+        [host.hostId]: "工作目录验证已过期，请在管理工作区重试",
+      }));
+      setSwitching(null);
+      return false;
+    }
+    if (transitionPromise) await transitionPromise;
+    if (disposed || switchSequence !== sequence) return false;
+
+    // Keep the old host mounted while /path is validated. Once validation
+    // succeeds, move the official route to a neutral home boundary before
+    // changing the server scope. Solid's keyed ServerKey provider and the
+    // route tree then have a complete render turn to dispose the old session
+    // chrome before the target host is mounted. This is the important part of
+    // the single-instance guarantee: changing the scope and the session route
+    // in the same batch can leave two legacy route branches alive briefly.
+    const next = props.onActivate(host);
+    window.dispatchEvent(new Event(SIDEBAR_PREPARE_SWITCH_EVENT));
+    const transition = (async () => {
+      const settle = (count: number) =>
+        count <= 0
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              let frames = 0;
+              const nextFrame = () => {
+                if (disposed || frames >= count) {
+                  resolve();
+                  return;
+                }
+                frames += 1;
+                window.requestAnimationFrame(nextFrame);
+              };
+              window.requestAnimationFrame(nextFrame);
+            });
+
+      if (location.pathname !== "/") {
+        navigate("/", { replace: true });
+        await settle(1);
+      }
+      if (disposed || switchSequence !== sequence) return false;
+
+      batch(() => {
+        props.onSelect(host);
+        server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
+        setRenderedHostId(host.hostId);
+      });
+      navigate(next, { replace: true });
+      await settle(0);
+      return !disposed && switchSequence === sequence;
+    })();
+    transitionPromise = transition;
+    const completed = await transition;
+    if (transitionPromise === transition) transitionPromise = null;
+    if (!completed || disposed || switchSequence !== sequence) return false;
+    window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
+    setSwitching(null);
+    return true;
   };
 
   const openSession = async (host: HostDescriptor) => {
-    if (busyAction() !== null) return;
+    if (busyAction() !== null || !hostIsAvailable(host)) return;
     setBusyAction(`new-${host.hostId}`);
     setError(null);
     try {
-      const root = await props.ensureWorkspaceRoot(host);
-      if (!root) throw new Error("工作目录尚未确认");
+      if (host.hostId !== renderedHostId()) {
+        const switched = await switchHost(host);
+        if (!switched) return;
+      }
+      const result = await props.ensureWorkspaceRoot(host);
+      if (!result.ok) {
+        setSwitchErrors((current) => ({
+          ...current,
+          [host.hostId]: workspaceRootErrorMessage(result.category),
+        }));
+        return;
+      }
+      const root = result.directory;
       const key = ServerConnection.Key.make(virtualOrigin(host.hostId));
       const projects = server.projects.forServer(key);
       for (const project of projects.list()) {
@@ -412,8 +419,8 @@ export function HostSidebar(props: {
       if (!projects.list().some((project) => project.worktree === root))
         projects.open(root);
       projects.touch(root);
-      history.pushState(null, "", workspaceSessionRoute(root));
-      window.dispatchEvent(new PopStateEvent("popstate"));
+      setManagementOpen(false);
+      navigate(workspaceSessionRoute(root));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法创建会话");
     } finally {
@@ -426,10 +433,22 @@ export function HostSidebar(props: {
     setBusyAction(`root-${host.hostId}`);
     setError(null);
     try {
-      if (!(await props.ensureWorkspaceRoot(host)))
-        setError("工作目录尚未确认，请稍后重试");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法验证工作目录");
+      const result = await props.ensureWorkspaceRoot(host, { force: true });
+      if (!result.ok)
+        setSwitchErrors((current) => ({
+          ...current,
+          [host.hostId]: workspaceRootErrorMessage(result.category),
+        }));
+      else
+        setSwitchErrors((current) => ({
+          ...current,
+          [host.hostId]: undefined,
+        }));
+    } catch {
+      setSwitchErrors((current) => ({
+        ...current,
+        [host.hostId]: "无法验证工作区，请稍后重试",
+      }));
     } finally {
       setBusyAction(null);
     }
@@ -470,8 +489,16 @@ export function HostSidebar(props: {
             {(host) => {
               const view = () => modelFor(host);
               const active = () => hostIsAvailable(host);
-              const root = () => view().workspaceRoot;
-              const rootReady = () => view().rootStatus === "ready" && !!root();
+              const statusTone = () => {
+                if (!active() || view().rootStatus === "failed")
+                  return "bg-icon-critical-base";
+                if (
+                  view().rootStatus === "loading" ||
+                  view().rootStatus === "retrying"
+                )
+                  return "bg-icon-warning-base";
+                return "bg-icon-success-base";
+              };
               return (
                 <div
                   data-aialra-host-item={host.hostId}
@@ -483,100 +510,34 @@ export function HostSidebar(props: {
                       host.hostId === renderedHostId() ? "secondary" : "ghost"
                     }
                     class="w-full min-w-0 justify-start gap-2 text-left"
-                    aria-expanded={view().expanded}
+                    aria-label={`${host.displayName}，${hostStateLabel(host)}，${rootStatusLabel(view().rootStatus)}`}
+                    title={`${host.displayName} · ${hostStateLabel(host)} · ${rootStatusLabel(view().rootStatus)}`}
                     aria-busy={switching() === host.hostId}
                     disabled={!active() || switching() === host.hostId}
-                    onClick={() => toggleHost(host)}
+                    onClick={() => void switchHost(host)}
                   >
                     <span
+                      data-aialra-host-status={host.hostId}
+                      data-aialra-host-status-state={view().rootStatus}
                       aria-hidden="true"
-                      class={`size-1.5 shrink-0 rounded-full ${active() ? "bg-icon-success-base" : "bg-icon-critical-base"}`}
+                      class={`size-1.5 shrink-0 rounded-full ${statusTone()} ${switching() === host.hostId ? "animate-pulse" : ""}`}
                     />
                     <span class="min-w-0 flex-1 truncate text-13-medium text-text-strong">
                       {host.displayName}
                     </span>
-                    <Icon
-                      name={view().expanded ? "chevron-up" : "chevron-down"}
-                      size="small"
-                      class="shrink-0 opacity-60"
-                    />
                   </Button>
 
                   <Show when={switchErrors()[host.hostId]}>
                     {(message) => (
-                      <p
+                      <span
                         data-aialra-host-error={host.hostId}
-                        role="alert"
+                        role="status"
+                        aria-live="polite"
                         class="m-0 px-2 text-11-regular leading-4 text-icon-critical-base"
                       >
                         {message()}
-                      </p>
+                      </span>
                     )}
-                  </Show>
-
-                  <Show when={view().expanded}>
-                    <div
-                      data-aialra-host-details={host.hostId}
-                      role="group"
-                      aria-label={`${host.displayName} 工作区详情`}
-                      class="mx-1 flex min-w-0 flex-col gap-2 overflow-hidden border-l border-border-weaker-base px-2 pb-2 pt-1"
-                    >
-                      <div class="min-w-0 whitespace-normal text-11-regular leading-4 text-text-weak">
-                        {view().workspaceLabel} · {hostStateLabel(host)} ·{" "}
-                        {host.platform}
-                      </div>
-                      <div
-                        data-aialra-workspace-root
-                        class="min-w-0 select-text whitespace-normal break-all font-mono text-11-regular leading-4 text-text-weak"
-                        title={root() ?? rootStatusLabel(view().rootStatus)}
-                      >
-                        {root() ?? rootStatusLabel(view().rootStatus)}
-                      </div>
-                      <div class="min-w-0 whitespace-normal break-words text-11-regular leading-4 text-text-weak">
-                        Agent {host.agentVersion} · OpenCode{" "}
-                        {host.opencodeVersion ?? "未知"}
-                      </div>
-                      <div class="flex min-w-0 flex-wrap gap-1">
-                        <Button
-                          type="button"
-                          size="small"
-                          variant="secondary"
-                          data-aialra-action="new-session"
-                          data-host-id={host.hostId}
-                          disabled={
-                            !rootReady() ||
-                            busyAction() !== null ||
-                            switching() !== null
-                          }
-                          aria-busy={busyAction() === `new-${host.hostId}`}
-                          onClick={() => void openSession(host)}
-                        >
-                          <Icon name="edit" size="small" />
-                          新建会话
-                        </Button>
-                        <Show
-                          when={
-                            view().rootStatus === "failed" ||
-                            view().rootStatus === "loading"
-                          }
-                        >
-                          <Button
-                            type="button"
-                            size="small"
-                            variant="ghost"
-                            data-aialra-action="retry-workspace-root"
-                            disabled={
-                              view().rootStatus === "loading" ||
-                              busyAction() !== null
-                            }
-                            aria-busy={busyAction() === `root-${host.hostId}`}
-                            onClick={() => void retryWorkspaceRoot(host)}
-                          >
-                            重试工作目录
-                          </Button>
-                        </Show>
-                      </div>
-                    </div>
                   </Show>
                 </div>
               );
@@ -656,8 +617,14 @@ export function HostSidebar(props: {
                 <For each={props.hosts}>
                   {(host) => {
                     const view = () => modelFor(host);
+                    const rootReady = () =>
+                      view().rootStatus === "ready" &&
+                      Boolean(view().workspaceRoot);
                     return (
-                      <div class="rounded-lg border border-border-weaker-base bg-surface-base p-3">
+                      <div
+                        data-aialra-host-management={host.hostId}
+                        class="rounded-lg border border-border-weaker-base bg-surface-base p-3"
+                      >
                         <div class="flex items-start justify-between gap-3">
                           <div class="min-w-0">
                             <div class="text-14-medium text-text-strong">
@@ -674,14 +641,73 @@ export function HostSidebar(props: {
                               : "边界待验证"}
                           </span>
                         </div>
-                        <div class="mt-3 select-text break-all font-mono text-11-regular text-text-strong">
-                          {view().workspaceRoot ??
-                            rootStatusLabel(view().rootStatus)}
+                        <div
+                          data-aialra-workspace-root
+                          class="mt-3 select-text break-all font-mono text-11-regular text-text-strong"
+                        >
+                          {rootReady()
+                            ? view().workspaceRoot
+                            : rootStatusLabel(view().rootStatus)}
                         </div>
                         <div class="mt-2 text-11-regular text-text-weak">
                           Agent {host.agentVersion} · OpenCode{" "}
                           {host.opencodeVersion ?? "未知"}
                         </div>
+                        <div class="mt-3 flex flex-wrap items-center gap-1">
+                          <Button
+                            type="button"
+                            size="small"
+                            variant="secondary"
+                            data-aialra-action="new-session"
+                            data-host-id={host.hostId}
+                            disabled={
+                              !rootReady() ||
+                              !hostIsAvailable(host) ||
+                              busyAction() !== null ||
+                              switching() !== null
+                            }
+                            aria-busy={busyAction() === `new-${host.hostId}`}
+                            onClick={() => void openSession(host)}
+                          >
+                            <Icon name="edit" size="small" />
+                            新建会话
+                          </Button>
+                          <Show
+                            when={
+                              view().rootStatus === "failed" ||
+                              view().rootStatus === "loading" ||
+                              view().rootStatus === "retrying"
+                            }
+                          >
+                            <Button
+                              type="button"
+                              size="small"
+                              variant="ghost"
+                              data-aialra-action="retry-workspace-root"
+                              disabled={
+                                view().rootStatus === "loading" ||
+                                view().rootStatus === "retrying" ||
+                                busyAction() !== null
+                              }
+                              aria-busy={busyAction() === `root-${host.hostId}`}
+                              onClick={() => void retryWorkspaceRoot(host)}
+                            >
+                              重试工作目录
+                            </Button>
+                          </Show>
+                        </div>
+                        <Show when={switchErrors()[host.hostId]}>
+                          {(message) => (
+                            <div
+                              data-aialra-host-error={host.hostId}
+                              role="status"
+                              aria-live="polite"
+                              class="mt-2 text-11-regular text-icon-critical-base"
+                            >
+                              {message()}
+                            </div>
+                          )}
+                        </Show>
                       </div>
                     );
                   }}

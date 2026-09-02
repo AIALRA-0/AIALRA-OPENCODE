@@ -14,6 +14,7 @@ class FakeChannel {
   private readonly listeners = new Set<Listener>();
   respond = true;
   headersOnly = false;
+  responseBody = '{"directory":"/workspace"}';
 
   listen(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -44,9 +45,7 @@ class FakeChannel {
           type: "relay.http.chunk",
           requestId,
           sequence: 0,
-          bodyBase64: base64url(
-            new TextEncoder().encode('{"directory":"/workspace"}'),
-          ),
+          bodyBase64: base64url(new TextEncoder().encode(this.responseBody)),
         });
       for (const listener of this.listeners)
         listener({ type: "relay.http.end", requestId, errorCode: null });
@@ -111,6 +110,25 @@ test("prewarms both HTTP and event channels without issuing content requests", a
   expect(
     [...relay.channels.values()].every((channel) => channel.sends.length === 0),
   ).toBe(true);
+  remote.dispose();
+});
+
+test("projects the V2 agent location envelope for the official bootstrap", async () => {
+  const hostId = "host-test-agent-envelope";
+  const relay = new FakeRelay();
+  const channel = new FakeChannel();
+  channel.responseBody = JSON.stringify({
+    location: { directory: "/workspace" },
+    data: [{ id: "build", mode: "primary" }],
+  });
+  relay.channels.set(`${hostId}:opencode-http`, channel);
+  const remote = createRemoteFetch(relay as never, [hostId]);
+
+  const response = await remote(requestUrl(hostId, "/api/agent"));
+  expect(await response.json()).toEqual([{ id: "build", mode: "primary" }]);
+  expect(
+    channel.sends.filter((item) => item.type === "relay.http.request"),
+  ).toHaveLength(1);
   remote.dispose();
 });
 

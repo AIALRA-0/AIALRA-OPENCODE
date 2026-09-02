@@ -35,14 +35,21 @@ import {
 import { RequestStatusSurface } from "./request-status";
 import {
   workspaceSessionRoute,
+  type WorkspaceRootResult,
+  type WorkspaceRootState,
   type WorkspaceStateByHost,
 } from "./workspace-state";
 import { claimApplicationRoot, markApplicationRoot } from "./app-lifecycle";
+import { RemoteFetchError, type RemoteErrorCategory } from "./action-state";
 
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
 const HOST_ROUTE_KEY = "aialra-opencode.host-route";
 const SETTINGS_KEY = "settings.v3";
 const CLASSIC_LAYOUT_ENFORCED = "aialra-classic-layout-enforced-v1";
+// A successful /path response is the host's stable workspace boundary. Keep
+// it warm for normal navigation and rapid host switching; explicit retry
+// actions bypass this TTL and force a fresh verification.
+const ROOT_VERIFICATION_TTL_MS = 30_000;
 
 function isAvailable(host: HostDescriptor): boolean {
   return host.state === "online" || host.state === "degraded";
@@ -357,6 +364,10 @@ async function start(): Promise<void> {
           host.hostId,
           {
             rootStatus: "idle" as const,
+            rootState: {
+              phase: "idle" as const,
+              generation: 0,
+            } satisfies WorkspaceRootState,
             expanded: host.hostId === initial.hostId,
           },
         ]),
@@ -393,8 +404,6 @@ async function start(): Promise<void> {
       return {};
     }
   })();
-  let routeSyncScheduled = false;
-
   const selectHost = (host: HostDescriptor) => {
     if (!isAvailable(host) || host.hostId === selected().hostId) return;
     const current = selected();
@@ -411,76 +420,188 @@ async function start(): Promise<void> {
     updateWorkspaceState(current.hostId, {
       lastRoute: routes[current.hostId],
     });
-    updateWorkspaceState(host.hostId, { expanded: true });
     localStorage.setItem(HOST_ROUTE_KEY, JSON.stringify(routes));
     localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
     setSelected(host);
   };
 
-  const activateHost = (host: HostDescriptor) => {
+  const activateHost = (host: HostDescriptor): string => {
     const root = workspaceRoots()[host.hostId];
     const saved = routes[host.hostId];
     const next =
       saved && saved !== "/" && routeBelongsToHost(saved, host.hostId, root)
         ? saved
         : defaultWorkspaceRoute(root);
-    history.replaceState(null, "", next);
     updateWorkspaceState(host.hostId, {
       expanded: true,
       lastRoute: next,
     });
-    if (!routeSyncScheduled) {
-      routeSyncScheduled = true;
-      setTimeout(() => {
-        routeSyncScheduled = false;
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      }, 0);
-    }
     mark("aialra-host-switch-state");
+    return next;
   };
 
-  const workspaceRootLoads = new Map<string, Promise<string | undefined>>();
-  const loadWorkspaceRoot = (host: HostDescriptor) => {
+  const workspaceRootLoads = new Map<string, Promise<WorkspaceRootResult>>();
+  const rootGeneration = new Map<string, number>();
+  const categoryForRootFailure = (
+    cause: unknown,
+    response?: Response,
+  ): RemoteErrorCategory => {
+    if (cause instanceof RemoteFetchError) return cause.category;
+    if (response?.status === 401) return "authentication_failure";
+    if (response?.status === 403) return "boundary_rejected";
+    return "upstream_timeout";
+  };
+  const loadWorkspaceRoot = (
+    host: HostDescriptor,
+    options: { force?: boolean } = {},
+  ): Promise<WorkspaceRootResult> => {
+    const known = workspaceStates()[host.hostId]?.rootState;
+    const knownRoot = known?.root ?? workspaceRoots()[host.hostId];
+    if (
+      !options.force &&
+      known?.phase === "ready" &&
+      knownRoot &&
+      known.verifiedAt !== undefined &&
+      Date.now() - known.verifiedAt <= ROOT_VERIFICATION_TTL_MS
+    ) {
+      return Promise.resolve({
+        ok: true as const,
+        hostId: host.hostId,
+        directory: knownRoot,
+        verifiedAt: known.verifiedAt,
+      });
+    }
     const existing = workspaceRootLoads.get(host.hostId);
     if (existing) return existing;
-    updateWorkspaceState(host.hostId, { rootStatus: "loading" });
+    const generation = (rootGeneration.get(host.hostId) ?? 0) + 1;
+    rootGeneration.set(host.hostId, generation);
+    const previous = workspaceStates()[host.hostId]?.rootState;
+    updateWorkspaceState(host.hostId, {
+      rootStatus: "loading",
+      rootState: {
+        phase: "loading",
+        root: previous?.root ?? workspaceRoots()[host.hostId],
+        generation,
+      },
+    });
     const pending = (async () => {
-      try {
-        const response = await remoteFetch(
-          new URL("/path", virtualOrigin(host.hostId)),
+      let lastFailure: Extract<WorkspaceRootResult, { ok: false }> | undefined;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        let response: Response | undefined;
+        try {
+          response = await remoteFetch(
+            new URL("/path", virtualOrigin(host.hostId)),
+          );
+          if (!response.ok) {
+            const category = categoryForRootFailure(undefined, response);
+            lastFailure = {
+              ok: false,
+              hostId: host.hostId,
+              category,
+              retryable: response.status >= 500,
+            };
+          } else {
+            const value = (await response.json()) as { directory?: unknown };
+            const directory = value.directory;
+            if (typeof directory !== "string" || !directory) {
+              lastFailure = {
+                ok: false,
+                hostId: host.hostId,
+                category: "upstream_timeout",
+                retryable: true,
+              };
+            } else {
+              const verifiedAt = Date.now();
+              if (rootGeneration.get(host.hostId) !== generation)
+                return {
+                  ok: false as const,
+                  hostId: host.hostId,
+                  category: "cancelled" as const,
+                  retryable: false,
+                };
+              setWorkspaceRoots((current) => ({
+                ...current,
+                [host.hostId]: directory,
+              }));
+              updateWorkspaceState(host.hostId, {
+                root: directory,
+                rootStatus: "ready",
+                rootState: {
+                  phase: "ready",
+                  root: directory,
+                  verifiedAt,
+                  generation,
+                },
+              });
+              return {
+                ok: true as const,
+                hostId: host.hostId,
+                directory,
+                verifiedAt,
+              };
+            }
+          }
+        } catch (cause) {
+          const category = categoryForRootFailure(cause, response);
+          const retryable =
+            category === "channel_acquire_timeout" ||
+            category === "upstream_timeout";
+          lastFailure = {
+            ok: false,
+            hostId: host.hostId,
+            category,
+            retryable,
+            requestId:
+              cause instanceof RemoteFetchError ? cause.requestId : undefined,
+          };
+        }
+        if (!lastFailure || !lastFailure.retryable || attempt === 2) break;
+        if (rootGeneration.get(host.hostId) === generation)
+          updateWorkspaceState(host.hostId, {
+            rootStatus: "retrying",
+            rootState: {
+              phase: "retrying",
+              root: previous?.root ?? workspaceRoots()[host.hostId],
+              generation,
+              errorCategory: lastFailure.category,
+              retryable: true,
+            },
+          });
+        await new Promise<void>((resolveDelay) =>
+          setTimeout(resolveDelay, attempt === 0 ? 150 : 400),
         );
-        if (!response.ok) {
-          updateWorkspaceState(host.hostId, { rootStatus: "failed" });
-          return undefined;
-        }
-        const value = (await response.json()) as { directory?: unknown };
-        const directory = value.directory;
-        if (typeof directory !== "string" || !directory) {
-          updateWorkspaceState(host.hostId, { rootStatus: "failed" });
-          return undefined;
-        }
-        setWorkspaceRoots((current) => ({
-          ...current,
-          [host.hostId]: directory,
-        }));
-        updateWorkspaceState(host.hostId, {
-          root: directory,
-          rootStatus: "ready",
-        });
-        return directory;
-      } catch {
-        updateWorkspaceState(host.hostId, { rootStatus: "failed" });
-        return undefined;
       }
+      const failure: Extract<WorkspaceRootResult, { ok: false }> =
+        lastFailure ?? {
+          ok: false as const,
+          hostId: host.hostId,
+          category: "upstream_timeout" as const,
+          retryable: true,
+        };
+      if (rootGeneration.get(host.hostId) === generation)
+        updateWorkspaceState(host.hostId, {
+          rootStatus: "failed",
+          rootState: {
+            phase: "failed",
+            root: previous?.root ?? workspaceRoots()[host.hostId],
+            generation,
+            errorCategory: failure.category,
+            retryable: failure.retryable,
+          },
+        });
+      return failure;
     })();
     workspaceRootLoads.set(host.hostId, pending);
-    void pending.then((directory) => {
-      if (
-        directory === undefined &&
-        workspaceRootLoads.get(host.hostId) === pending
-      )
-        workspaceRootLoads.delete(host.hostId);
-    });
+    void pending.then(
+      () => {
+        if (workspaceRootLoads.get(host.hostId) === pending)
+          workspaceRootLoads.delete(host.hostId);
+      },
+      () => {
+        if (workspaceRootLoads.get(host.hostId) === pending)
+          workspaceRootLoads.delete(host.hostId);
+      },
+    );
     return pending;
   };
 

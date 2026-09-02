@@ -32,6 +32,7 @@ const SAFE_METADATA_PATHS = new Set([
   "/api/project",
   "/session",
   "/api/session",
+  "/api/agent",
   "/provider",
   "/config/providers",
   "/global/health",
@@ -168,6 +169,48 @@ function cloneSnapshot(snapshot: ResponseSnapshot): Response {
     statusText: snapshot.statusText,
     headers: new Headers(snapshot.headers),
   });
+}
+
+function projectV2AgentList(
+  request: Request,
+  snapshot: ResponseSnapshot,
+): ResponseSnapshot {
+  if (
+    request.method !== "GET" ||
+    new URL(request.url).pathname !== "/api/agent" ||
+    snapshot.status < 200 ||
+    snapshot.status >= 300
+  )
+    return snapshot;
+
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(snapshot.body));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return snapshot;
+    const record = value as { location?: unknown; data?: unknown };
+    if (
+      !record.location ||
+      typeof record.location !== "object" ||
+      !Array.isArray(record.data)
+    )
+      return snapshot;
+
+    // OpenCode 1.18.25's V2 agent endpoint returns a location envelope, while
+    // the unchanged official bootstrap passes the response data directly to
+    // normalizeAgentList. Project only this read response at the wrapper
+    // boundary so the upstream source remains untouched and V1 responses are
+    // left unchanged.
+    const headers = snapshot.headers.filter(
+      ([name]) => name.toLowerCase() !== "content-length",
+    );
+    return {
+      ...snapshot,
+      headers,
+      body: encoder.encode(JSON.stringify(record.data)),
+    };
+  } catch {
+    return snapshot;
+  }
 }
 
 async function snapshotResponse(
@@ -626,15 +669,18 @@ export function createRemoteFetch(
               retryable: false,
             },
           );
-          const snapshot = await snapshotResponse(
-            response,
-            metadataTimeoutMs,
-            () => {
-              metrics.timeouts += 1;
-              metrics.upstreamTimeouts += 1;
-              controller.abort();
-            },
-            bodyTimeoutError,
+          const snapshot = projectV2AgentList(
+            request,
+            await snapshotResponse(
+              response,
+              metadataTimeoutMs,
+              () => {
+                metrics.timeouts += 1;
+                metrics.upstreamTimeouts += 1;
+                controller.abort();
+              },
+              bodyTimeoutError,
+            ),
           );
           if (
             snapshot.body.byteLength <= MAX_METADATA_CACHE_BYTES &&
