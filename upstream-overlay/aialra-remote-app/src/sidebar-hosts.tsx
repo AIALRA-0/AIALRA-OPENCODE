@@ -33,6 +33,7 @@ import {
 const SIDEBAR_OPEN_EVENT = "aialra-open-sidebar";
 const SIDEBAR_PREPARE_SWITCH_EVENT = "aialra-prepare-sidebar-switch";
 const SIDEBAR_SWITCH_SETTLED_EVENT = "aialra-sidebar-switch-settled";
+const SWITCH_TRANSITION_DEBOUNCE_MS = 64;
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
@@ -268,14 +269,19 @@ export function HostSidebar(props: {
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [switching, setSwitching] = createSignal<string | null>(null);
+  const [renderedHostId, setRenderedHostId] = createSignal(
+    props.selectedHostId(),
+  );
   const [expandedHosts, setExpandedHosts] = createSignal<
     Record<string, boolean>
   >({});
   let switchSequence = 0;
+  let switchTimer: number | undefined;
   let managementClose: HTMLButtonElement | undefined;
 
   createEffect(() => {
     const selected = props.selectedHostId();
+    if (switching() === null) setRenderedHostId(selected);
     setExpandedHosts((current) =>
       current[selected] !== undefined
         ? current
@@ -289,6 +295,10 @@ export function HostSidebar(props: {
     };
     document.addEventListener("keydown", dismissWithEscape);
     onCleanup(() => document.removeEventListener("keydown", dismissWithEscape));
+  });
+
+  onCleanup(() => {
+    if (switchTimer !== undefined) window.clearTimeout(switchTimer);
   });
 
   createEffect(() => {
@@ -306,48 +316,63 @@ export function HostSidebar(props: {
       expanded:
         expandedHosts()[host.hostId] ??
         state?.expanded ??
-        host.hostId === props.selectedHostId(),
+        host.hostId === renderedHostId(),
     };
   };
 
   const selectHost = (host: HostDescriptor) => {
     if (!hostIsAvailable(host)) return;
-    if (host.hostId === props.selectedHostId()) {
+    if (host.hostId === renderedHostId()) {
       setExpandedHosts((current) => ({ ...current, [host.hostId]: true }));
       return;
     }
-    if (switching() !== null) return;
     const sequence = ++switchSequence;
+    const currentHostId = renderedHostId();
     setSwitching(host.hostId);
+    // Reflect the target immediately in the native sidebar. The parent
+    // server scope still activates only after the workspace root is verified.
+    setRenderedHostId(host.hostId);
     setError(null);
-    const currentHostId = props.selectedHostId();
     setExpandedHosts((current) => ({
       ...current,
       [currentHostId]: false,
       [host.hostId]: true,
     }));
-    props.onSelect(host);
-    void (async () => {
-      try {
-        await props.ensureWorkspaceRoot(host);
-        if (switchSequence !== sequence) return;
-        props.onActivate(host);
-        server.setActive(ServerConnection.Key.make(virtualOrigin(host.hostId)));
-      } catch (cause) {
-        if (switchSequence === sequence)
-          setError(cause instanceof Error ? cause.message : "无法切换工作区");
-      } finally {
-        if (switchSequence === sequence) {
-          window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
-          setSwitching(null);
-        }
-      }
-    })();
+    const rootPromise = props.ensureWorkspaceRoot(host);
+    void rootPromise.catch(() => undefined);
+    if (switchTimer !== undefined) window.clearTimeout(switchTimer);
+    switchTimer = window.setTimeout(() => {
+      switchTimer = undefined;
+      if (switchSequence !== sequence) return;
+      // Let the sidebar paint its immediate feedback before the official app
+      // performs the heavier server-scope transition. Repeated clicks within
+      // this window are coalesced to the latest host.
+      props.onSelect(host);
+      void rootPromise
+        .then((root) => {
+          if (!root) throw new Error("工作目录尚未确认");
+          if (switchSequence !== sequence) return;
+          props.onActivate(host);
+          server.setActive(
+            ServerConnection.Key.make(virtualOrigin(host.hostId)),
+          );
+        })
+        .catch((cause) => {
+          if (switchSequence === sequence)
+            setError(cause instanceof Error ? cause.message : "无法切换工作区");
+        })
+        .finally(() => {
+          if (switchSequence === sequence) {
+            window.dispatchEvent(new Event(SIDEBAR_SWITCH_SETTLED_EVENT));
+            setSwitching(null);
+          }
+        });
+    }, SWITCH_TRANSITION_DEBOUNCE_MS);
   };
 
   const toggleHost = (host: HostDescriptor) => {
     if (!hostIsAvailable(host)) return;
-    if (host.hostId !== props.selectedHostId()) {
+    if (host.hostId !== renderedHostId()) {
       selectHost(host);
       return;
     }
@@ -419,7 +444,7 @@ export function HostSidebar(props: {
     <SidebarMount>
       <section
         data-aialra-sidebar-hosts
-        data-active-host={props.selectedHostId()}
+        data-active-host={renderedHostId()}
         aria-label="AIALRA 工作区"
         class="order-first w-full shrink-0 border-b border-border-weaker-base bg-background-base"
       >
@@ -441,9 +466,7 @@ export function HostSidebar(props: {
                   <Button
                     type="button"
                     variant={
-                      host.hostId === props.selectedHostId()
-                        ? "secondary"
-                        : "ghost"
+                      host.hostId === renderedHostId() ? "secondary" : "ghost"
                     }
                     class="w-full min-w-0 justify-start gap-2 text-left"
                     aria-expanded={view().expanded}
