@@ -143,6 +143,12 @@ async function expectSingleSessionChrome(
         .length,
       sidebarSlot: document.querySelectorAll("[data-aialra-sidebar-slot]")
         .length,
+      workspaceControl: document.querySelectorAll(
+        "[data-aialra-workspace-control]",
+      ).length,
+      workspaceControlSlot: document.querySelectorAll(
+        '[data-aialra-workspace-control-slot="true"]',
+      ).length,
     }));
   try {
     await expect.poll(readCounts, { timeout: 10_000 }).toEqual({
@@ -154,7 +160,9 @@ async function expectSingleSessionChrome(
       status: session ? 1 : 0,
       review: session ? 1 : 0,
       toast: 1,
-      sidebarSlot: 1,
+      sidebarSlot: 0,
+      workspaceControl: 1,
+      workspaceControlSlot: 1,
     });
   } catch (error) {
     const debug = await page.evaluate(() => ({
@@ -228,8 +236,8 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       });
     });
     await page.goto(origin);
-    const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
-    await expect(workspaceNav).toBeVisible();
+    const workspaceControl = page.locator("[data-aialra-workspace-control]");
+    await expect(workspaceControl).toBeVisible();
     await expectSingleSessionChrome(page, { session: false });
     await expect(page.locator("#root")).toHaveAttribute(
       "data-aialra-app-state",
@@ -240,7 +248,8 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     await expect(page.locator('[data-component="toast-region"]')).toHaveCount(
       1,
     );
-    await expect(page.locator("[data-aialra-sidebar-slot]")).toHaveCount(1);
+    await expect(page.locator("[data-aialra-sidebar-slot]")).toHaveCount(0);
+    await expect(page.locator("[data-aialra-sidebar-hosts]")).toHaveCount(0);
     await expect
       .poll(() =>
         page.evaluate(
@@ -254,15 +263,10 @@ test("runs the zero-patch official App and recovers after a control-plane restar
       page.locator('nav[data-component="sidebar-nav-desktop"]'),
     ).toBeVisible();
     await expect(page.locator("[data-aialra-sidebar-fallback]")).toHaveCount(0);
-    await expect(
-      workspaceNav
-        .locator("[data-aialra-host-item]")
-        .first()
-        .getByRole("button")
-        .first(),
-    ).toBeVisible();
-    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
-    const management = page.locator("[data-aialra-workspace-management]");
+    await workspaceControl.getByRole("button", { name: /工作区/u }).click();
+    const management = page.locator(
+      '[data-aialra-workspace-management] [data-component="dialog"]',
+    );
     await expect(management).toBeVisible();
     const newSessionButton = management
       .locator("[data-aialra-host-management]")
@@ -274,10 +278,8 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     await expect
       .poll(() => new URL(page.url()).pathname)
       .toMatch(/^\/[^/]+\/session$/u);
-    await expect(
-      workspaceNav.locator('[data-aialra-action="new-session"]'),
-    ).toHaveCount(0);
-    await expect(management).toBeHidden();
+    await expect(page.locator("[data-aialra-workspace-control]")).toBeVisible();
+    await expect(management).toHaveCount(0);
     await expectSingleSessionChrome(page);
     await page.goto(origin);
     await expect(page.locator("body")).not.toContainText(".opencode.invalid");
@@ -468,8 +470,10 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
       });
     });
     await page.goto(origin);
-    const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
-    await expect(workspaceNav).toBeVisible();
+    const workspaceControl = page.locator("[data-aialra-workspace-control]");
+    await expect(workspaceControl).toBeVisible();
+    await expect(page.locator("[data-aialra-sidebar-hosts]")).toHaveCount(0);
+    await expect(page.locator("[data-aialra-sidebar-slot]")).toHaveCount(0);
     await expect(
       page.locator("[data-aialra-classic-layout-preference]"),
     ).toHaveAttribute("data-new-layout", "false");
@@ -482,43 +486,63 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
         ),
       )
       .toBe(1);
+    const management = page.locator(
+      '[data-aialra-workspace-management] [data-component="dialog"]',
+    );
+    const openManagement = async () => {
+      if ((await management.count()) === 0)
+        await workspaceControl.getByRole("button", { name: /工作区/u }).click();
+      await expect(management).toBeVisible();
+    };
     const chooseWorkspace = async (name: "AIALRA VPS" | "AIALRA Windows") => {
-      const item = workspaceNav
-        .locator("[data-aialra-host-item]")
+      await openManagement();
+      const item = management
+        .locator("[data-aialra-host-management]")
         .filter({ hasText: name })
         .first();
-      const hostId = await item.getAttribute("data-aialra-host-item");
-      expect(hostId).toBeTruthy();
-      const target = item.getByRole("button").first();
-      const started = await page.evaluate(() => performance.now());
-      await target.evaluate((element) =>
-        (element as HTMLButtonElement).click(),
+      const actualHostId = await item.getAttribute(
+        "data-aialra-host-management",
       );
-      await expect(workspaceNav).toHaveAttribute("data-active-host", hostId!);
+      expect(actualHostId).toBeTruthy();
+      const target = item.getByRole("button", {
+        name:
+          (await workspaceControl.getAttribute("data-active-host")) ===
+          actualHostId
+            ? "当前工作区"
+            : `切换到 ${name}`,
+      });
+      const started = await page.evaluate(() => performance.now());
+      if (await target.isEnabled()) await target.click();
+      await page.waitForFunction(
+        (expectedHostId) =>
+          document
+            .querySelector("[data-aialra-workspace-control]")
+            ?.getAttribute("data-active-host") === expectedHostId,
+        actualHostId!,
+        { polling: "raf" },
+      );
       const finished = await page.evaluate(() => performance.now());
       return finished - started;
     };
-    await expect(workspaceNav).toContainText("AIALRA VPS");
-    await expect(
-      workspaceNav.locator("[data-aialra-workspace-root]"),
-    ).toHaveCount(0);
-    await expect(
-      workspaceNav.locator('[data-aialra-action="new-session"]'),
-    ).toHaveCount(0);
-
-    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
-    const management = page.locator("[data-aialra-workspace-management]");
-    await expect(management).toBeVisible();
+    await expect(workspaceControl).toContainText("AIALRA VPS");
+    await expect(management).toHaveCount(0);
+    await openManagement();
     await expect(management).toContainText("AIALRA VPS");
     await expect(management).toContainText("AIALRA Windows");
     await expect(
       management.locator("[data-aialra-workspace-root]"),
     ).toHaveCount(2);
+    await expect(
+      management.locator('[data-aialra-action="select-workspace"]'),
+    ).toHaveCount(2);
     await management.getByRole("button", { name: "关闭工作区管理" }).click();
-    await expect(management).toBeHidden();
+    await expect(management).toHaveCount(0);
 
-    const sidebarGeometry = await workspaceNav.evaluate((element) => {
-      const items = [...element.querySelectorAll("[data-aialra-host-item]")]
+    await openManagement();
+    const managementGeometry = await management.evaluate((element) => {
+      const items = [
+        ...element.querySelectorAll("[data-aialra-host-management]"),
+      ]
         .filter((item): item is HTMLElement => item instanceof HTMLElement)
         .map((item) => item.getBoundingClientRect());
       return {
@@ -526,12 +550,12 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
           (item, index) =>
             index > 0 && items[index - 1]!.bottom > item.top + 0.5,
         ),
-        overflow: [...element.querySelectorAll("[data-aialra-host-item]")]
+        overflow: [...element.querySelectorAll("[data-aialra-host-management]")]
           .filter((item): item is HTMLElement => item instanceof HTMLElement)
           .some((item) => item.scrollWidth > item.clientWidth + 1),
       };
     });
-    expect(sidebarGeometry).toEqual({ overlaps: false, overflow: false });
+    expect(managementGeometry).toEqual({ overlaps: false, overflow: false });
 
     const roots = await page.evaluate(async () => {
       const response = await fetch("/api/v1/hosts");
@@ -574,13 +598,6 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     expect(roots.vps).not.toBe(roots.remote);
 
     await chooseWorkspace("AIALRA Windows");
-    const activeWindows = workspaceNav
-      .locator("[data-aialra-host-item]")
-      .filter({ hasText: "AIALRA Windows" })
-      .first();
-    await expect(workspaceNav).toContainText("AIALRA Windows");
-    await expect(activeWindows.locator("button")).toHaveCount(1);
-    await workspaceNav.getByRole("button", { name: "管理工作区" }).click();
     const windowsManagement = page
       .locator("[data-aialra-host-management]")
       .filter({ hasText: "AIALRA Windows" })
@@ -596,13 +613,9 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
       .toMatch(/^\/[^/]+\/session$/u);
     await expectSingleSessionChrome(page);
 
-    await expect(workspaceNav).toBeVisible();
+    await expect(workspaceControl).toBeVisible();
     await expect(page.locator("[data-aialra-sidebar-fallback]")).toHaveCount(0);
-    await expect
-      .poll(() =>
-        workspaceNav.evaluate((element) => getComputedStyle(element).position),
-      )
-      .not.toBe("fixed");
+    await expect(page.locator("[data-aialra-sidebar-hosts]")).toHaveCount(0);
     await expect(page.locator("body")).not.toContainText(".opencode.invalid");
 
     const switchDurations: number[] = [];
@@ -634,9 +647,16 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
         const toggle = page.getByRole("button", {
           name: /Toggle (?:sidebar|menu)|侧边栏/u,
         });
-        if (!(await workspaceNav.isVisible())) await toggle.click();
+        if (
+          !(await page
+            .locator('nav[data-component="sidebar-nav-mobile"]')
+            .isVisible())
+        )
+          await toggle.click();
       }
-      await expect(workspaceNav).toBeVisible();
+      await expect(
+        page.locator("[data-aialra-workspace-control]"),
+      ).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(
@@ -650,6 +670,7 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     await expect(
       page.locator('[data-component="toast-region"]'),
     ).not.toContainText("Transport");
+    await expect(page.locator("body")).not.toContainText("工作目录尚未确认");
   } finally {
     await stop(vpsAgent);
     await stop(remoteAgent);

@@ -38,7 +38,6 @@ export interface HostViewModel extends HostDescriptor {
   rootStatus: WorkspaceRootStatus;
   rootErrorCategory?: RemoteErrorCategory;
   rootRetryable?: boolean;
-  expanded: boolean;
 }
 
 export interface WorkspaceState {
@@ -46,7 +45,6 @@ export interface WorkspaceState {
   rootStatus: WorkspaceRootStatus;
   rootState?: WorkspaceRootState;
   lastRoute?: string;
-  expanded: boolean;
 }
 
 export type WorkspaceStateByHost = Record<string, WorkspaceState>;

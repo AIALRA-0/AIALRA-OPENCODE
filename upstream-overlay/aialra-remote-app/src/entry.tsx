@@ -27,11 +27,7 @@ import {
 import { BrowserRelay } from "./relay";
 import { createRemoteFetch, virtualOrigin } from "./remote-fetch";
 import { installRemoteWebSocket } from "./remote-websocket";
-import {
-  ClassicLayoutPreference,
-  HostSidebar,
-  SidebarLayoutBridge,
-} from "./sidebar-hosts";
+import { ClassicLayoutPreference, WorkspaceControl } from "./sidebar-hosts";
 import { RequestStatusSurface } from "./request-status";
 import {
   workspaceSessionRoute,
@@ -368,7 +364,6 @@ async function start(): Promise<void> {
               phase: "idle" as const,
               generation: 0,
             } satisfies WorkspaceRootState,
-            expanded: host.hostId === initial.hostId,
           },
         ]),
       ),
@@ -381,7 +376,6 @@ async function start(): Promise<void> {
       ...current,
       [hostId]: {
         rootStatus: current[hostId]?.rootStatus ?? "idle",
-        expanded: current[hostId]?.expanded ?? false,
         ...current[hostId],
         ...patch,
       },
@@ -433,7 +427,6 @@ async function start(): Promise<void> {
         ? saved
         : defaultWorkspaceRoute(root);
     updateWorkspaceState(host.hostId, {
-      expanded: true,
       lastRoute: next,
     });
     mark("aialra-host-switch-state");
@@ -485,99 +478,74 @@ async function start(): Promise<void> {
       },
     });
     const pending = (async () => {
-      let lastFailure: Extract<WorkspaceRootResult, { ok: false }> | undefined;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        let response: Response | undefined;
-        try {
-          response = await remoteFetch(
-            new URL("/path", virtualOrigin(host.hostId)),
-          );
-          if (!response.ok) {
-            const category = categoryForRootFailure(undefined, response);
-            lastFailure = {
-              ok: false,
-              hostId: host.hostId,
-              category,
-              retryable: response.status >= 500,
-            };
-          } else {
-            const value = (await response.json()) as { directory?: unknown };
-            const directory = value.directory;
-            if (typeof directory !== "string" || !directory) {
-              lastFailure = {
-                ok: false,
-                hostId: host.hostId,
-                category: "upstream_timeout",
-                retryable: true,
-              };
-            } else {
-              const verifiedAt = Date.now();
-              if (rootGeneration.get(host.hostId) !== generation)
-                return {
-                  ok: false as const,
-                  hostId: host.hostId,
-                  category: "cancelled" as const,
-                  retryable: false,
-                };
-              setWorkspaceRoots((current) => ({
-                ...current,
-                [host.hostId]: directory,
-              }));
-              updateWorkspaceState(host.hostId, {
-                root: directory,
-                rootStatus: "ready",
-                rootState: {
-                  phase: "ready",
-                  root: directory,
-                  verifiedAt,
-                  generation,
-                },
-              });
-              return {
-                ok: true as const,
-                hostId: host.hostId,
-                directory,
-                verifiedAt,
-              };
-            }
-          }
-        } catch (cause) {
-          const category = categoryForRootFailure(cause, response);
-          const retryable =
-            category === "channel_acquire_timeout" ||
-            category === "upstream_timeout";
-          lastFailure = {
+      let response: Response | undefined;
+      let result: WorkspaceRootResult;
+      try {
+        response = await remoteFetch(
+          new URL("/path", virtualOrigin(host.hostId)),
+        );
+        if (!response.ok) {
+          const category = categoryForRootFailure(undefined, response);
+          result = {
             ok: false,
             hostId: host.hostId,
             category,
-            retryable,
-            requestId:
-              cause instanceof RemoteFetchError ? cause.requestId : undefined,
+            retryable: response.status >= 500,
           };
+        } else {
+          const value = (await response.json()) as { directory?: unknown };
+          const directory = value.directory;
+          if (typeof directory !== "string" || !directory) {
+            result = {
+              ok: false,
+              hostId: host.hostId,
+              category: "upstream_timeout",
+              retryable: false,
+            };
+          } else {
+            const verifiedAt = Date.now();
+            if (rootGeneration.get(host.hostId) !== generation)
+              return {
+                ok: false as const,
+                hostId: host.hostId,
+                category: "cancelled" as const,
+                retryable: false,
+              };
+            setWorkspaceRoots((current) => ({
+              ...current,
+              [host.hostId]: directory,
+            }));
+            updateWorkspaceState(host.hostId, {
+              root: directory,
+              rootStatus: "ready",
+              rootState: {
+                phase: "ready",
+                root: directory,
+                verifiedAt,
+                generation,
+              },
+            });
+            return {
+              ok: true as const,
+              hostId: host.hostId,
+              directory,
+              verifiedAt,
+            };
+          }
         }
-        if (!lastFailure || !lastFailure.retryable || attempt === 2) break;
-        if (rootGeneration.get(host.hostId) === generation)
-          updateWorkspaceState(host.hostId, {
-            rootStatus: "retrying",
-            rootState: {
-              phase: "retrying",
-              root: previous?.root ?? workspaceRoots()[host.hostId],
-              generation,
-              errorCategory: lastFailure.category,
-              retryable: true,
-            },
-          });
-        await new Promise<void>((resolveDelay) =>
-          setTimeout(resolveDelay, attempt === 0 ? 150 : 400),
-        );
-      }
-      const failure: Extract<WorkspaceRootResult, { ok: false }> =
-        lastFailure ?? {
-          ok: false as const,
+      } catch (cause) {
+        const category = categoryForRootFailure(cause, response);
+        result = {
+          ok: false,
           hostId: host.hostId,
-          category: "upstream_timeout" as const,
-          retryable: true,
+          category,
+          retryable:
+            category === "channel_acquire_timeout" ||
+            category === "upstream_timeout",
+          requestId:
+            cause instanceof RemoteFetchError ? cause.requestId : undefined,
         };
+      }
       if (rootGeneration.get(host.hostId) === generation)
         updateWorkspaceState(host.hostId, {
           rootStatus: "failed",
@@ -585,11 +553,11 @@ async function start(): Promise<void> {
             phase: "failed",
             root: previous?.root ?? workspaceRoots()[host.hostId],
             generation,
-            errorCategory: failure.category,
-            retryable: failure.retryable,
+            errorCategory: result.category,
+            retryable: result.retryable,
           },
         });
-      return failure;
+      return result;
     })();
     workspaceRootLoads.set(host.hostId, pending);
     void pending.then(
@@ -681,10 +649,9 @@ async function start(): Promise<void> {
               // application render immediately and let request-level status
               // surfaces report host readiness instead.
               disableHealthCheck
-              serverScoped={<SidebarLayoutBridge />}
             >
               <ClassicLayoutPreference />
-              <HostSidebar
+              <WorkspaceControl
                 hosts={hosts}
                 selectedHostId={() => selected().hostId}
                 workspaceRoots={workspaceRoots}
@@ -716,16 +683,10 @@ async function start(): Promise<void> {
 
   mark("aialra-app-first-render");
   // Keep first paint and the selected host independent from inactive-host
-  // metadata. Warm the active channels immediately, then hydrate other hosts
-  // one at a time after the official sidebar has rendered.
+  // metadata. Warm only the selected host; the official application opens an
+  // inactive host's channels after an explicit switch.
   void remoteFetch.prewarm([initial.hostId]);
   void loadWorkspaceRoot(initial);
-  const inactive = available.filter((host) => host.hostId !== initial.hostId);
-  window.setTimeout(() => {
-    void (async () => {
-      for (const host of inactive) await remoteFetch.prewarm([host.hostId]);
-    })();
-  }, 1_000);
 }
 
 void start().catch((error) => {
