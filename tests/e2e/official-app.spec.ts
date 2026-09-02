@@ -511,8 +511,13 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
             ? "当前工作区"
             : `切换到 ${name}`,
       });
+      await expect(target).toBeVisible();
+      await expect(target).toBeEnabled();
       const started = await page.evaluate(() => performance.now());
-      if (await target.isEnabled()) await target.click();
+      // Actionability polling belongs to the test harness, not the user-visible
+      // switch. Start the browser clock at the actual click event while still
+      // asserting that the real control is visible and enabled first.
+      await target.dispatchEvent("click");
       await page.waitForFunction(
         (expectedHostId) =>
           document
