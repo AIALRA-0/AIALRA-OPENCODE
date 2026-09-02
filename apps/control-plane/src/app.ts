@@ -33,6 +33,40 @@ export interface AppServices {
   close(): Promise<void>;
 }
 
+const NO_STORE = "no-store";
+const IMMUTABLE_ASSET = "public, max-age=31536000, immutable";
+const REVALIDATED_ASSET = "public, max-age=3600, must-revalidate";
+
+export function cacheControlFor(pathOrUrl: string): string {
+  let pathname = pathOrUrl;
+  try {
+    pathname = new URL(pathOrUrl, "https://opencode.invalid").pathname;
+  } catch {
+    pathname = pathOrUrl.split("?", 1)[0] ?? pathOrUrl;
+  }
+  if (
+    pathname === "/" ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/health/")
+  )
+    return NO_STORE;
+
+  const basename = pathname.slice(pathname.lastIndexOf("/") + 1);
+  if (
+    pathname.startsWith("/assets/") &&
+    /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/u.test(basename)
+  )
+    return IMMUTABLE_ASSET;
+  if (
+    /\.(?:wasm|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico|webmanifest|mp3|mp4|webm|ogg)$/iu.test(
+      pathname,
+    )
+  )
+    return REVALIDATED_ASSET;
+  return NO_STORE;
+}
+
 function inlineScriptHashes(indexPath: string): string[] {
   if (!existsSync(indexPath)) return [];
   const html = readFileSync(indexPath, "utf8");
@@ -103,6 +137,17 @@ export async function createApp(config: AppConfig): Promise<AppServices> {
     max: 180,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
+  });
+
+  // Register before the static and API routes so the policy covers both
+  // fastify-static responses and application handlers. Nginx remains a
+  // transport proxy; the control plane is the source of truth for which
+  // browser-visible resources may be cached.
+  app.addHook("onSend", async (request, reply, payload) => {
+    const cacheControl = cacheControlFor(request.url);
+    reply.header("Cache-Control", cacheControl);
+    if (cacheControl === NO_STORE) reply.header("Pragma", "no-cache");
+    return payload;
   });
 
   const db = new ControlPlaneDatabase(config.databasePath, config.databaseKey);
@@ -254,12 +299,6 @@ export async function createApp(config: AppConfig): Promise<AppServices> {
         .send(readFileSync(join(config.webDistPath, "index.html")));
     });
   }
-
-  app.addHook("onSend", async (request, reply, payload) => {
-    reply.header("Cache-Control", "no-store");
-    reply.header("Pragma", "no-cache");
-    return payload;
-  });
 
   app.server.on("upgrade", (request, socket, head) => {
     if (!relay.handleUpgrade(request, socket, head)) socket.destroy();
