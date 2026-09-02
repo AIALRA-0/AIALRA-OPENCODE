@@ -49,7 +49,7 @@ const CLASSIC_LAYOUT_ENFORCED = "aialra-classic-layout-enforced-v1";
 // A successful /path response is the host's stable workspace boundary. Keep
 // it warm for normal navigation and rapid host switching; explicit retry
 // actions bypass this TTL and force a fresh verification.
-const ROOT_VERIFICATION_TTL_MS = 30_000;
+const ROOT_VERIFICATION_TTL_MS = 120_000;
 
 function isAvailable(host: HostDescriptor): boolean {
   return host.state === "online" || host.state === "degraded";
