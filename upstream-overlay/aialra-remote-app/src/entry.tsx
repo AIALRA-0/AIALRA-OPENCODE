@@ -5,7 +5,6 @@ import {
   PlatformProvider,
   ServerConnection,
   useServer,
-  useTabs,
   type Platform,
 } from "@opencode-ai/app";
 import {
@@ -34,6 +33,10 @@ import {
   SidebarLayoutBridge,
 } from "./sidebar-hosts";
 import { RequestStatusSurface } from "./request-status";
+import {
+  workspaceSessionRoute,
+  type WorkspaceStateByHost,
+} from "./workspace-state";
 
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
 const HOST_ROUTE_KEY = "aialra-opencode.host-route";
@@ -85,25 +88,35 @@ function decodeRouteServerKey(segment: string): string | null {
   }
 }
 
-function encodeRouteDirectory(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join(
-    "",
-  );
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/u, "");
+function decodeRouteDirectory(segment: string): string | null {
+  try {
+    const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const binary = atob(padded);
+    return new TextDecoder().decode(
+      Uint8Array.from(binary, (value) => value.charCodeAt(0)),
+    );
+  } catch {
+    return null;
+  }
 }
 
 function defaultWorkspaceRoute(root: string | undefined): string {
-  return root ? `/${encodeRouteDirectory(root)}/session` : "/";
+  return root ? workspaceSessionRoute(root) : "/";
 }
 
-function routeBelongsToHost(route: string, hostId: string): boolean {
+function routeBelongsToHost(
+  route: string,
+  hostId: string,
+  workspaceRoot?: string,
+): boolean {
   const match = route.match(/^\/server\/([^/]+)(?:\/|$)/u);
-  if (!match) return route === "/" || route.startsWith("/new-session");
-  return decodeRouteServerKey(match[1]!) === virtualOrigin(hostId);
+  if (match) return decodeRouteServerKey(match[1]!) === virtualOrigin(hostId);
+  if (route === "/" || route.startsWith("/new-session")) return true;
+  if (!workspaceRoot) return false;
+  const segment = route.split("/", 3)[1];
+  const directory = segment ? decodeRouteDirectory(segment) : null;
+  return directory ? withinWorkspace(workspaceRoot, directory) : false;
 }
 
 function withinWorkspace(root: string, candidate: string): boolean {
@@ -255,162 +268,42 @@ function BootstrapPanel(props: { hosts: HostDescriptor[] }) {
 function HostWorkspaceBootstrap(props: {
   hosts: HostDescriptor[];
   workspaceRoots: Accessor<Record<string, string>>;
+  selectedHostId: Accessor<string>;
 }) {
   const server = useServer();
   const processed = new Map<string, string>();
   createEffect(() => {
     const roots = props.workspaceRoots();
-    for (const host of props.hosts) {
-      const root = roots[host.hostId];
-      if (!root) continue;
-      const key = ServerConnection.Key.make(virtualOrigin(host.hostId));
-      const projects = server.projects.forServer(key);
-      const previous = processed.get(host.hostId);
-      if (
-        previous === root &&
-        projects.list().some((project) => project.worktree === root)
-      )
-        continue;
-      for (const project of projects.list()) {
-        if (!withinWorkspace(root, project.worktree))
-          projects.remove(project.worktree);
-      }
-      if (!projects.list().some((project) => project.worktree === root))
-        projects.open(root);
-      projects.touch(root);
-      processed.set(host.hostId, root);
+    const host = props.hosts.find(
+      (candidate) => candidate.hostId === props.selectedHostId(),
+    );
+    if (!host) return;
+    const root = roots[host.hostId];
+    if (!root) return;
+    const key = ServerConnection.Key.make(virtualOrigin(host.hostId));
+    const projects = server.projects.forServer(key);
+    const previous = processed.get(host.hostId);
+    if (
+      previous === root &&
+      projects.list().some((project) => project.worktree === root)
+    )
+      return;
+    for (const project of projects.list()) {
+      if (!withinWorkspace(root, project.worktree))
+        projects.remove(project.worktree);
     }
+    if (!projects.list().some((project) => project.worktree === root))
+      projects.open(root);
+    projects.touch(root);
+    processed.set(host.hostId, root);
   });
-  return null;
-}
-
-function NewSessionFallback(props: {
-  hosts: HostDescriptor[];
-  selectedHostId: Accessor<string>;
-  ensureWorkspaceRoot(host: HostDescriptor): Promise<string | undefined>;
-}) {
-  const server = useServer();
-  const tabs = useTabs();
-  const opening = new Set<string>();
-
-  const openWorkspaceDraft = async (
-    host: HostDescriptor,
-    button: HTMLButtonElement,
-  ) => {
-    if (opening.has(host.hostId)) return;
-    opening.add(host.hostId);
-    const previousBusy = button.getAttribute("aria-busy");
-    button.setAttribute("aria-busy", "true");
-    try {
-      const root = await props.ensureWorkspaceRoot(host);
-      const key = ServerConnection.Key.make(virtualOrigin(host.hostId));
-      const projects = server.projects.forServer(key);
-      if (!root) return;
-      for (const project of projects.list()) {
-        if (!withinWorkspace(root, project.worktree))
-          projects.remove(project.worktree);
-      }
-      if (!projects.list().some((project) => project.worktree === root))
-        projects.open(root);
-      projects.touch(root);
-      // The official tab store can accept a draft before its persisted
-      // hydration flag flips. Calling it immediately keeps the button and
-      // route responsive; hydration will reconcile the tab state afterwards.
-      // A rejected draft is intentionally swallowed here because the normal
-      // App error surface will expose a retryable state without blocking the
-      // click task.
-      try {
-        const draft = (await tabs.newDraft(
-          { server: key, directory: root },
-          "",
-        )) as { draftID?: unknown } | undefined;
-        // The official tab store can finish its transition on a later frame
-        // and another delegated home handler can briefly restore "/".  Keep
-        // the newly created draft usable in both cases by retrying the route
-        // handoff for a short, bounded window; no remote request is repeated
-        // and an already changed route is never overwritten
-        const routeDraft = () => {
-          if (location.pathname !== "/") return;
-          const fromResult =
-            typeof draft?.draftID === "string" ? draft.draftID : undefined;
-          const links = document.querySelectorAll<HTMLAnchorElement>(
-            'a[href^="/new-session?draftId="]',
-          );
-          const latest = links.item(links.length - 1)?.href;
-          const draftID =
-            fromResult ??
-            (latest
-              ? new URL(latest, location.href).searchParams.get("draftId")
-              : null);
-          if (!draftID) return;
-          history.pushState(
-            null,
-            "",
-            `/new-session?draftId=${encodeURIComponent(draftID)}`,
-          );
-          window.dispatchEvent(new PopStateEvent("popstate"));
-        };
-        queueMicrotask(routeDraft);
-        window.setTimeout(routeDraft, 80);
-        window.setTimeout(routeDraft, 240);
-      } catch {
-        // The normal App error surface remains responsible for retryable
-        // failures; the click handler must never leave an unhandled rejection
-      }
-    } finally {
-      opening.delete(host.hostId);
-      if (previousBusy === null) button.removeAttribute("aria-busy");
-      else button.setAttribute("aria-busy", previousBusy);
-    }
-  };
-
-  onMount(() => {
-    const onClick = (event: MouseEvent) => {
-      if (location.pathname !== "/") return;
-      const target = event.target;
-      const button =
-        target instanceof Element ? target.closest("button") : null;
-      if (!(button instanceof HTMLButtonElement)) return;
-      if (button.closest("[data-aialra-sidebar-hosts]")) return;
-      const isNewSession =
-        button.dataset.action === "home-new-session" ||
-        button.dataset.action === "home-project-new-session" ||
-        button.matches(
-          'button[aria-label="新建会话"], button[aria-label="New session"]',
-        );
-      if (!isNewSession) return;
-
-      const host = props.hosts.find(
-        (candidate) => candidate.hostId === props.selectedHostId(),
-      );
-      if (!host || !isAvailable(host)) return;
-
-      const key = ServerConnection.Key.make(virtualOrigin(host.hostId));
-      // Let the official handler own the normal path once the workspace root
-      // has been hydrated. The fallback is only for the transient empty-store
-      // window during first load, and never intercepts a populated workspace.
-      if (server.projects.forServer(key).list().length > 0) return;
-
-      // The official titlebar intentionally does nothing when its project store
-      // is still empty during the first metadata round trip. Intercept home
-      // actions consistently so stale persisted project entries cannot make the
-      // official handler silently return without a draft.
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      void openWorkspaceDraft(host, button);
-    };
-
-    // Window capture runs before the official App's delegated document
-    // handler, so an empty project store cannot swallow this user action
-    window.addEventListener("click", onClick, true);
-    onCleanup(() => window.removeEventListener("click", onClick, true));
-  });
-
   return null;
 }
 
 async function start(): Promise<void> {
+  // Apply the wrapper policy before any asynchronous bootstrap work. This
+  // prevents a persisted V2 preference from winning the first render race.
+  enforceClassicLayout();
   const hosts = await bootstrap();
   const available = hosts.filter(isAvailable);
   if (!available.length) {
@@ -452,6 +345,32 @@ async function start(): Promise<void> {
   const [workspaceRoots, setWorkspaceRoots] = createSignal<
     Record<string, string>
   >({});
+  const [workspaceStates, setWorkspaceStates] =
+    createSignal<WorkspaceStateByHost>(
+      Object.fromEntries(
+        available.map((host) => [
+          host.hostId,
+          {
+            rootStatus: "idle" as const,
+            expanded: host.hostId === initial.hostId,
+          },
+        ]),
+      ),
+    );
+  const updateWorkspaceState = (
+    hostId: string,
+    patch: Partial<WorkspaceStateByHost[string]>,
+  ) => {
+    setWorkspaceStates((current) => ({
+      ...current,
+      [hostId]: {
+        rootStatus: current[hostId]?.rootStatus ?? "idle",
+        expanded: current[hostId]?.expanded ?? false,
+        ...current[hostId],
+        ...patch,
+      },
+    }));
+  };
   const routes = (() => {
     try {
       const value = JSON.parse(localStorage.getItem(HOST_ROUTE_KEY) ?? "{}");
@@ -474,24 +393,37 @@ async function start(): Promise<void> {
   const selectHost = (host: HostDescriptor) => {
     if (!isAvailable(host) || host.hostId === selected().hostId) return;
     const current = selected();
+    const currentRoute = safeRoute(
+      `${location.pathname}${location.search}${location.hash}`,
+    );
     routes[current.hostId] = routeBelongsToHost(
-      safeRoute(`${location.pathname}${location.search}${location.hash}`),
+      currentRoute,
       current.hostId,
+      workspaceRoots()[current.hostId],
     )
-      ? safeRoute(`${location.pathname}${location.search}${location.hash}`)
+      ? currentRoute
       : "/";
+    updateWorkspaceState(current.hostId, {
+      lastRoute: routes[current.hostId],
+    });
+    updateWorkspaceState(host.hostId, { expanded: true });
     localStorage.setItem(HOST_ROUTE_KEY, JSON.stringify(routes));
     localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
     setSelected(host);
   };
 
   const activateHost = (host: HostDescriptor) => {
+    const root = workspaceRoots()[host.hostId];
     const saved = routes[host.hostId];
     const next =
-      saved && saved !== "/" && routeBelongsToHost(saved, host.hostId)
+      saved && saved !== "/" && routeBelongsToHost(saved, host.hostId, root)
         ? saved
-        : defaultWorkspaceRoute(workspaceRoots()[host.hostId]);
+        : defaultWorkspaceRoute(root);
     history.replaceState(null, "", next);
+    updateWorkspaceState(host.hostId, {
+      expanded: true,
+      lastRoute: next,
+    });
     if (!routeSyncScheduled) {
       routeSyncScheduled = true;
       setTimeout(() => {
@@ -506,22 +438,33 @@ async function start(): Promise<void> {
   const loadWorkspaceRoot = (host: HostDescriptor) => {
     const existing = workspaceRootLoads.get(host.hostId);
     if (existing) return existing;
+    updateWorkspaceState(host.hostId, { rootStatus: "loading" });
     const pending = (async () => {
       try {
         const response = await remoteFetch(
           new URL("/path", virtualOrigin(host.hostId)),
         );
-        if (!response.ok) return undefined;
+        if (!response.ok) {
+          updateWorkspaceState(host.hostId, { rootStatus: "failed" });
+          return undefined;
+        }
         const value = (await response.json()) as { directory?: unknown };
         const directory = value.directory;
-        if (typeof directory !== "string" || !directory) return undefined;
+        if (typeof directory !== "string" || !directory) {
+          updateWorkspaceState(host.hostId, { rootStatus: "failed" });
+          return undefined;
+        }
         setWorkspaceRoots((current) => ({
           ...current,
           [host.hostId]: directory,
         }));
+        updateWorkspaceState(host.hostId, {
+          root: directory,
+          rootStatus: "ready",
+        });
         return directory;
       } catch {
-        // The official App will expose the host state and retry its own metadata
+        updateWorkspaceState(host.hostId, { rootStatus: "failed" });
         return undefined;
       }
     })();
@@ -539,10 +482,6 @@ async function start(): Promise<void> {
   const root = document.getElementById("root");
   if (!(root instanceof HTMLElement))
     throw new Error("application root is missing");
-  // This product deliberately keeps the official classic project/session
-  // sidebar. Apply the wrapper policy before AppInterface mounts so an older
-  // browser preference cannot flash or remount the management-heavy shell.
-  enforceClassicLayout();
   render(
     () => (
       <PlatformProvider
@@ -611,6 +550,7 @@ async function start(): Promise<void> {
               hosts={hosts}
               selectedHostId={() => selected().hostId}
               workspaceRoots={workspaceRoots}
+              workspaceStates={workspaceStates}
               ensureWorkspaceRoot={loadWorkspaceRoot}
               onSelect={selectHost}
               onActivate={activateHost}
@@ -619,11 +559,7 @@ async function start(): Promise<void> {
             <HostWorkspaceBootstrap
               hosts={available}
               workspaceRoots={workspaceRoots}
-            />
-            <NewSessionFallback
-              hosts={available}
               selectedHostId={() => selected().hostId}
-              ensureWorkspaceRoot={loadWorkspaceRoot}
             />
             <RequestStatusSurface remoteFetch={remoteFetch} />
           </AppInterface>
@@ -634,8 +570,20 @@ async function start(): Promise<void> {
   );
 
   mark("aialra-app-first-render");
-  void remoteFetch.prewarm(hostIds);
-  void Promise.allSettled(available.map(loadWorkspaceRoot));
+  // Keep first paint and the selected host independent from inactive-host
+  // metadata. Warm the active channels immediately, then hydrate other hosts
+  // one at a time after the official sidebar has rendered.
+  void remoteFetch.prewarm([initial.hostId]);
+  void loadWorkspaceRoot(initial);
+  const inactive = available.filter((host) => host.hostId !== initial.hostId);
+  window.setTimeout(() => {
+    void (async () => {
+      for (const host of inactive) {
+        await remoteFetch.prewarm([host.hostId]);
+        await loadWorkspaceRoot(host);
+      }
+    })();
+  }, 1_000);
 }
 
 void start().catch((error) => {
