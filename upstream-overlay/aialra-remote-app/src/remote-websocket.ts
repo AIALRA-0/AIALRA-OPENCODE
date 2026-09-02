@@ -7,7 +7,9 @@ const VIRTUAL_SUFFIX = ".aialra.invalid";
 export function installRemoteWebSocket(
   relay: BrowserRelay,
   hostIds: string[],
-): void {
+): () => void {
+  const NativeWebSocket = globalThis.WebSocket;
+  const sockets = new Set<RemoteWebSocket>();
   const hosts = new Map(
     hostIds.map((hostId) => [new URL(virtualOrigin(hostId)).hostname, hostId]),
   );
@@ -43,6 +45,7 @@ export function installRemoteWebSocket(
     private protocols: string[] = [];
     constructor(url: string | URL, protocols?: string | string[]) {
       super();
+      sockets.add(this);
       this.url = String(url);
       const parsed = new URL(this.url, location.href);
       if (!parsed.hostname.endsWith(VIRTUAL_SUFFIX)) {
@@ -244,6 +247,7 @@ export function installRemoteWebSocket(
       this.stopListening?.();
       this.stopListening = null;
       this.channel = null;
+      sockets.delete(this);
       const event = new CloseEvent("close", {
         code,
         reason,
@@ -255,4 +259,13 @@ export function installRemoteWebSocket(
   }
 
   globalThis.WebSocket = RemoteWebSocket as unknown as typeof WebSocket;
+  return () => {
+    for (const socket of [...sockets])
+      socket.close(1000, "application disposed");
+    sockets.clear();
+    if (
+      globalThis.WebSocket === (RemoteWebSocket as unknown as typeof WebSocket)
+    )
+      globalThis.WebSocket = NativeWebSocket;
+  };
 }

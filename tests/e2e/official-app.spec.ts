@@ -130,16 +130,51 @@ test("runs the zero-patch official App and recovers after a control-plane restar
     });
     await waitForLine(agent, '"browserReady":true');
 
+    await page.addInitScript(() => {
+      const state = window as unknown as {
+        __aialraBrowserRelaySockets: number;
+      };
+      state.__aialraBrowserRelaySockets = 0;
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          if (String(args[0]).includes("/ws/v1/browser"))
+            state.__aialraBrowserRelaySockets += 1;
+          return Reflect.construct(target, args) as WebSocket;
+        },
+      });
+    });
     await page.goto(origin);
     const workspaceNav = page.locator("[data-aialra-sidebar-hosts]");
     await expect(workspaceNav).toBeVisible();
+    await expect(page.locator("#root")).toHaveAttribute(
+      "data-aialra-app-state",
+      "running",
+    );
+    await expect(page.locator("header")).toHaveCount(1);
+    await expect(page.locator("#opencode-titlebar-center")).toHaveCount(1);
+    await expect(page.locator('[data-component="toast-region"]')).toHaveCount(
+      1,
+    );
+    await expect(page.locator("[data-aialra-sidebar-slot]")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __aialraBrowserRelaySockets: number })
+              .__aialraBrowserRelaySockets,
+        ),
+      )
+      .toBe(1);
     await expect(
       page.locator('nav[data-component="sidebar-nav-desktop"]'),
     ).toBeVisible();
     await expect(page.locator("[data-aialra-sidebar-fallback]")).toHaveCount(0);
     await expect(
       workspaceNav
-        .getByRole("button", { name: /VPS 工作区|远程工作区/u })
+        .locator("[data-aialra-host-item]")
+        .first()
+        .getByRole("button")
         .first(),
     ).toBeVisible();
     const newSessionButton = workspaceNav.getByRole("button", {
@@ -362,6 +397,22 @@ test("keeps VPS and remote workspaces isolated", async ({ page }) => {
     await expect(management).toContainText("AIALRA Windows");
     await management.getByRole("button", { name: "关闭工作区管理" }).click();
     await expect(management).toBeHidden();
+
+    const sidebarGeometry = await workspaceNav.evaluate((element) => {
+      const items = [...element.querySelectorAll("[data-aialra-host-item]")]
+        .filter((item): item is HTMLElement => item instanceof HTMLElement)
+        .map((item) => item.getBoundingClientRect());
+      return {
+        overlaps: items.some(
+          (item, index) =>
+            index > 0 && items[index - 1]!.bottom > item.top + 0.5,
+        ),
+        overflow: [...element.querySelectorAll("[data-aialra-host-item]")]
+          .filter((item): item is HTMLElement => item instanceof HTMLElement)
+          .some((item) => item.scrollWidth > item.clientWidth + 1),
+      };
+    });
+    expect(sidebarGeometry).toEqual({ overlaps: false, overflow: false });
 
     const roots = await page.evaluate(async () => {
       const response = await fetch("/api/v1/hosts");

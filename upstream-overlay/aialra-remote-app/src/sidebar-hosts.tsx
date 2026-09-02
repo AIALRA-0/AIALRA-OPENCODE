@@ -37,11 +37,6 @@ const SWITCH_TRANSITION_DEBOUNCE_MS = 64;
 
 export function ClassicLayoutPreference() {
   const settings = useSettings();
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!settings.ready() || !settings.general.newLayoutDesigns()) return;
-    settings.general.setNewLayoutDesigns(false);
-  });
   return (
     <>
       <style>{`
@@ -70,8 +65,7 @@ function sidebarPanel(): HTMLElement | null {
   const rail = nav?.querySelector<HTMLElement>(
     '[data-component="sidebar-rail"]',
   );
-  const root = rail?.parentElement;
-  const panel = root?.children.item(1);
+  const panel = rail?.nextElementSibling;
   return panel instanceof HTMLElement ? panel : null;
 }
 
@@ -123,6 +117,11 @@ function SidebarMount(props: { children: JSX.Element }) {
       }
       if (slot.parentElement !== target || target.firstElementChild !== slot)
         target.prepend(slot);
+      for (const duplicate of target.querySelectorAll<HTMLElement>(
+        ':scope > [data-aialra-sidebar-slot="true"]',
+      )) {
+        if (duplicate !== slot) duplicate.remove();
+      }
       hideOfficialTopLevelNewSession(target);
       if (slot !== mount()) setMount(slot);
     };
@@ -269,6 +268,9 @@ export function HostSidebar(props: {
   const [pairing, setPairing] = createSignal<PairingCode | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [switching, setSwitching] = createSignal<string | null>(null);
+  const [switchErrors, setSwitchErrors] = createSignal<
+    Record<string, string | undefined>
+  >({});
   const [renderedHostId, setRenderedHostId] = createSignal(
     props.selectedHostId(),
   );
@@ -314,9 +316,8 @@ export function HostSidebar(props: {
       workspaceRoot: props.workspaceRoots()[host.hostId] ?? state?.root,
       rootStatus: state?.rootStatus ?? "idle",
       expanded:
-        expandedHosts()[host.hostId] ??
-        state?.expanded ??
-        host.hostId === renderedHostId(),
+        host.hostId === renderedHostId() &&
+        (expandedHosts()[host.hostId] ?? state?.expanded ?? true),
     };
   };
 
@@ -333,6 +334,7 @@ export function HostSidebar(props: {
     // server scope still activates only after the workspace root is verified.
     setRenderedHostId(host.hostId);
     setError(null);
+    setSwitchErrors((current) => ({ ...current, [host.hostId]: undefined }));
     setExpandedHosts((current) => ({
       ...current,
       [currentHostId]: false,
@@ -358,8 +360,20 @@ export function HostSidebar(props: {
           );
         })
         .catch((cause) => {
-          if (switchSequence === sequence)
-            setError(cause instanceof Error ? cause.message : "无法切换工作区");
+          if (switchSequence === sequence) {
+            const message =
+              cause instanceof Error ? cause.message : "无法切换工作区";
+            setRenderedHostId(currentHostId);
+            setExpandedHosts((current) => ({
+              ...current,
+              [currentHostId]: true,
+              [host.hostId]: false,
+            }));
+            setSwitchErrors((current) => ({
+              ...current,
+              [host.hostId]: message,
+            }));
+          }
         })
         .finally(() => {
           if (switchSequence === sequence) {
@@ -461,7 +475,7 @@ export function HostSidebar(props: {
               return (
                 <div
                   data-aialra-host-item={host.hostId}
-                  class="min-w-0 rounded-md"
+                  class="flex min-w-0 flex-col gap-1 rounded-md"
                 >
                   <Button
                     type="button"
@@ -478,14 +492,8 @@ export function HostSidebar(props: {
                       aria-hidden="true"
                       class={`size-1.5 shrink-0 rounded-full ${active() ? "bg-icon-success-base" : "bg-icon-critical-base"}`}
                     />
-                    <span class="min-w-0 flex-1 truncate">
-                      <span class="block truncate text-13-medium text-text-strong">
-                        {host.displayName}
-                      </span>
-                      <span class="block truncate text-11-regular text-text-weak">
-                        {view().workspaceLabel} · {hostStateLabel(host)} ·{" "}
-                        {host.platform}
-                      </span>
+                    <span class="min-w-0 flex-1 truncate text-13-medium text-text-strong">
+                      {host.displayName}
                     </span>
                     <Icon
                       name={view().expanded ? "chevron-up" : "chevron-down"}
@@ -494,21 +502,37 @@ export function HostSidebar(props: {
                     />
                   </Button>
 
+                  <Show when={switchErrors()[host.hostId]}>
+                    {(message) => (
+                      <p
+                        data-aialra-host-error={host.hostId}
+                        role="alert"
+                        class="m-0 px-2 text-11-regular leading-4 text-icon-critical-base"
+                      >
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
+
                   <Show when={view().expanded}>
                     <div
                       data-aialra-host-details={host.hostId}
                       role="group"
                       aria-label={`${host.displayName} 工作区详情`}
-                      class="mx-1 flex min-w-0 flex-col gap-2 border-l border-border-weaker-base px-2 pb-2 pt-1"
+                      class="mx-1 flex min-w-0 flex-col gap-2 overflow-hidden border-l border-border-weaker-base px-2 pb-2 pt-1"
                     >
+                      <div class="min-w-0 whitespace-normal text-11-regular leading-4 text-text-weak">
+                        {view().workspaceLabel} · {hostStateLabel(host)} ·{" "}
+                        {host.platform}
+                      </div>
                       <div
                         data-aialra-workspace-root
-                        class="min-w-0 select-text break-all font-mono text-11-regular text-text-weak"
+                        class="min-w-0 select-text whitespace-normal break-all font-mono text-11-regular leading-4 text-text-weak"
                         title={root() ?? rootStatusLabel(view().rootStatus)}
                       >
                         {root() ?? rootStatusLabel(view().rootStatus)}
                       </div>
-                      <div class="truncate text-11-regular text-text-weak">
+                      <div class="min-w-0 whitespace-normal break-words text-11-regular leading-4 text-text-weak">
                         Agent {host.agentVersion} · OpenCode{" "}
                         {host.opencodeVersion ?? "未知"}
                       </div>

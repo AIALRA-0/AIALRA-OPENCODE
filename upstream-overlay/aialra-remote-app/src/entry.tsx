@@ -37,6 +37,7 @@ import {
   workspaceSessionRoute,
   type WorkspaceStateByHost,
 } from "./workspace-state";
+import { claimApplicationRoot, markApplicationRoot } from "./app-lifecycle";
 
 const DEFAULT_SERVER_KEY = "aialra-opencode.default-host";
 const HOST_ROUTE_KEY = "aialra-opencode.host-route";
@@ -301,25 +302,28 @@ function HostWorkspaceBootstrap(props: {
 }
 
 async function start(): Promise<void> {
+  const root = document.getElementById("root");
+  if (!(root instanceof HTMLElement))
+    throw new Error("application root is missing");
+  if (!claimApplicationRoot(root)) return;
+
   // Apply the wrapper policy before any asynchronous bootstrap work. This
   // prevents a persisted V2 preference from winning the first render race.
   enforceClassicLayout();
   const hosts = await bootstrap();
   const available = hosts.filter(isAvailable);
   if (!available.length) {
-    const root = document.getElementById("root");
-    if (!(root instanceof HTMLElement))
-      throw new Error("application root is missing");
     render(() => <BootstrapPanel hosts={hosts} />, root);
+    markApplicationRoot(root, "running");
     return;
   }
 
   const relay = new BrowserRelay();
   const hostIds = available.map((host) => host.hostId);
-  installRemoteWebSocket(relay, hostIds);
+  const restoreRemoteWebSocket = installRemoteWebSocket(relay, hostIds);
   const remoteFetch = createRemoteFetch(relay, hostIds);
   const nativeFetch = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const wrappedFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const candidate = input instanceof Request ? input.url : String(input);
     const url = new URL(candidate, location.href);
     if (url.hostname.endsWith(".aialra.invalid"))
@@ -327,6 +331,7 @@ async function start(): Promise<void> {
     if (url.origin === location.origin) return nativeFetch(input, init);
     return Promise.reject(new TypeError("unregistered network destination"));
   }) as typeof fetch;
+  globalThis.fetch = wrappedFetch;
 
   const serverFor = (host: HostDescriptor) => ({
     type: "http" as const,
@@ -479,95 +484,114 @@ async function start(): Promise<void> {
     return pending;
   };
 
-  const root = document.getElementById("root");
-  if (!(root instanceof HTMLElement))
-    throw new Error("application root is missing");
-  render(
-    () => (
-      <PlatformProvider
-        value={
-          {
-            platform: "web",
-            version: "remote-0.1.0",
-            openExternal(value) {
-              if (!URL.canParse(value)) return;
-              const url = new URL(value);
-              if (!["http:", "https:", "mailto:"].includes(url.protocol))
-                return;
-              if (url.hostname.endsWith(".aialra.invalid")) return;
-              window.open(url.href, "_blank", "noopener,noreferrer");
-            },
-            async restart() {
-              location.reload();
-            },
-            async notify(title, description, onClick) {
-              if (
-                !("Notification" in window) ||
-                Notification.permission !== "granted"
-              )
-                return;
-              const notification = new Notification(title, {
-                body: description,
-              });
-              notification.onclick = () => {
-                window.focus();
-                onClick?.();
-                notification.close();
-              };
-            },
-            fetch: remoteFetch,
-            getDefaultServer: async () =>
-              ServerConnection.Key.make(virtualOrigin(selected().hostId)),
-            setDefaultServer(value) {
-              if (value === null) {
-                localStorage.removeItem(DEFAULT_SERVER_KEY);
-                return;
-              }
-              const host = available.find(
-                (candidate) => virtualOrigin(candidate.hostId) === value,
-              );
-              if (host) localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
-            },
-          } satisfies Platform
-        }
-      >
-        <AppBaseProviders>
-          <AppInterface
-            defaultServer={ServerConnection.Key.make(
-              virtualOrigin(initial.hostId),
-            )}
-            servers={serverConfigs}
-            // The relay can briefly report a host as online before its local
-            // agent channel is ready; the official blocking health gate would
-            // hide the sidebar and make the whole page look inert. Let the
-            // application render immediately and let request-level status
-            // surfaces report host readiness instead.
-            disableHealthCheck
-            serverScoped={<SidebarLayoutBridge />}
-          >
-            <ClassicLayoutPreference />
-            <HostSidebar
-              hosts={hosts}
-              selectedHostId={() => selected().hostId}
-              workspaceRoots={workspaceRoots}
-              workspaceStates={workspaceStates}
-              ensureWorkspaceRoot={loadWorkspaceRoot}
-              onSelect={selectHost}
-              onActivate={activateHost}
-              onRefresh={() => location.reload()}
-            />
-            <HostWorkspaceBootstrap
-              hosts={available}
-              workspaceRoots={workspaceRoots}
-              selectedHostId={() => selected().hostId}
-            />
-            <RequestStatusSurface remoteFetch={remoteFetch} />
-          </AppInterface>
-        </AppBaseProviders>
-      </PlatformProvider>
-    ),
-    root,
-  );
+  let disposeRender: (() => void) | undefined;
+  const disposeRuntime = () => {
+    disposeRender?.();
+    disposeRender = undefined;
+    remoteFetch.dispose();
+    restoreRemoteWebSocket();
+    relay.dispose();
+    if (globalThis.fetch === wrappedFetch) globalThis.fetch = nativeFetch;
+  };
+  const onPageHide = (event: PageTransitionEvent) => {
+    if (!event.persisted) disposeRuntime();
+  };
+  window.addEventListener("pagehide", onPageHide, { once: true });
+
+  try {
+    disposeRender = render(
+      () => (
+        <PlatformProvider
+          value={
+            {
+              platform: "web",
+              version: "remote-0.1.0",
+              openExternal(value) {
+                if (!URL.canParse(value)) return;
+                const url = new URL(value);
+                if (!["http:", "https:", "mailto:"].includes(url.protocol))
+                  return;
+                if (url.hostname.endsWith(".aialra.invalid")) return;
+                window.open(url.href, "_blank", "noopener,noreferrer");
+              },
+              async restart() {
+                location.reload();
+              },
+              async notify(title, description, onClick) {
+                if (
+                  !("Notification" in window) ||
+                  Notification.permission !== "granted"
+                )
+                  return;
+                const notification = new Notification(title, {
+                  body: description,
+                });
+                notification.onclick = () => {
+                  window.focus();
+                  onClick?.();
+                  notification.close();
+                };
+              },
+              fetch: remoteFetch,
+              getDefaultServer: async () =>
+                ServerConnection.Key.make(virtualOrigin(selected().hostId)),
+              setDefaultServer(value) {
+                if (value === null) {
+                  localStorage.removeItem(DEFAULT_SERVER_KEY);
+                  return;
+                }
+                const host = available.find(
+                  (candidate) => virtualOrigin(candidate.hostId) === value,
+                );
+                if (host) localStorage.setItem(DEFAULT_SERVER_KEY, host.hostId);
+              },
+            } satisfies Platform
+          }
+        >
+          <AppBaseProviders>
+            <AppInterface
+              defaultServer={ServerConnection.Key.make(
+                virtualOrigin(initial.hostId),
+              )}
+              servers={serverConfigs}
+              // The relay can briefly report a host as online before its local
+              // agent channel is ready; the official blocking health gate would
+              // hide the sidebar and make the whole page look inert. Let the
+              // application render immediately and let request-level status
+              // surfaces report host readiness instead.
+              disableHealthCheck
+              serverScoped={<SidebarLayoutBridge />}
+            >
+              <ClassicLayoutPreference />
+              <HostSidebar
+                hosts={hosts}
+                selectedHostId={() => selected().hostId}
+                workspaceRoots={workspaceRoots}
+                workspaceStates={workspaceStates}
+                ensureWorkspaceRoot={loadWorkspaceRoot}
+                onSelect={selectHost}
+                onActivate={activateHost}
+                onRefresh={() => location.reload()}
+              />
+              <HostWorkspaceBootstrap
+                hosts={available}
+                workspaceRoots={workspaceRoots}
+                selectedHostId={() => selected().hostId}
+              />
+              <RequestStatusSurface remoteFetch={remoteFetch} />
+            </AppInterface>
+          </AppBaseProviders>
+        </PlatformProvider>
+      ),
+      root,
+    );
+  } catch (error) {
+    window.removeEventListener("pagehide", onPageHide);
+    disposeRuntime();
+    throw error;
+  }
+
+  markApplicationRoot(root, "running");
 
   mark("aialra-app-first-render");
   // Keep first paint and the selected host independent from inactive-host
@@ -578,19 +602,18 @@ async function start(): Promise<void> {
   const inactive = available.filter((host) => host.hostId !== initial.hostId);
   window.setTimeout(() => {
     void (async () => {
-      for (const host of inactive) {
-        await remoteFetch.prewarm([host.hostId]);
-        await loadWorkspaceRoot(host);
-      }
+      for (const host of inactive) await remoteFetch.prewarm([host.hostId]);
     })();
   }, 1_000);
 }
 
 void start().catch((error) => {
   const root = document.getElementById("root");
-  if (root)
+  if (root) {
+    markApplicationRoot(root, "failed");
     root.textContent =
       error instanceof Error
         ? error.message
         : "AIALRA OpenCode failed to start";
+  }
 });

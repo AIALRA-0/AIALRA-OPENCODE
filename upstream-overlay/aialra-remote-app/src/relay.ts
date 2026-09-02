@@ -49,12 +49,14 @@ export class BrowserRelay {
   private readonly reusable = new Map<string, Promise<RelayChannel>>();
   private readonly identities = new Map<string, Promise<string>>();
   private readonly failures = new Map<string, RelayRetryState>();
+  private disposed = false;
 
   async channel(
     hostId: string,
     kind: ChannelKind,
     scopes: string[],
   ): Promise<RelayChannel> {
+    if (this.disposed) throw new Error("relay is disposed");
     const key = `${hostId}:${kind}`;
     for (;;) {
       const current = this.reusable.get(key);
@@ -260,6 +262,19 @@ export class BrowserRelay {
     }
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const state of [...this.channels.values()]) this.close(state);
+    this.channels.clear();
+    this.reusable.clear();
+    this.identities.clear();
+    this.failures.clear();
+    this.socketReady = null;
+    this.socket?.close(1000, "application disposed");
+    this.socket = null;
+  }
+
   private async connect(): Promise<void> {
     if (this.socket?.readyState === NativeWebSocket.OPEN) return;
     if (this.socketReady) return this.socketReady;
@@ -303,7 +318,8 @@ export class BrowserRelay {
         }
         this.channels.clear();
         this.reusable.clear();
-        console.error("[AIALRA relay] control connection closed");
+        if (!this.disposed)
+          console.error("[AIALRA relay] control connection closed");
       });
     });
     return this.socketReady;
