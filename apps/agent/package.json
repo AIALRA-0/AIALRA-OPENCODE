@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@aialra-opencode/protocol": "workspace:*",
-    "@noble/ciphers": "2.0.1",
+    "@noble/ciphers": "2.4.0",
     "@noble/curves": "2.0.1",
     "@noble/hashes": "2.0.1",
     "ws": "8.21.3",
